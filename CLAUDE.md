@@ -71,20 +71,37 @@ PostgreSQL · pytest. Qualité : ruff (lint+format) · mypy (strict).
 - Cœur pur : zéro import de lib externe métier dans `swisspipe/core/`.
 - Typage : mypy strict. Lint/format : ruff.
 
-## 6. Découpage en lots (L1 → L5)
+## 6. Découpage en lots (L1 → L5) — référence projet
 
-> *Proposé pour cette session de scaffolding — à confirmer avant d'attaquer L1.*
+Découpage par CAPACITÉ PRODUIT LIVRABLE (pas par couche technique).
+Chaque lot livre quelque chose de démontrable.
 
-- **L1 — Domaine du cœur** : value objects (Dimension, Valeur, Espace, Matrice, Mode),
-  entités (Modèle, Instance, Rôle, Groupe), invariants encodés dans les types. Aucune I/O.
-- **L2 — Services du cœur** : renversement (donnée source → topologie), calcul des
-  droits effectifs à instant figé (INV-3), gel des droits (INV-2). Ports définis.
-- **L3 — Persistance** : modèles SQLAlchemy + 1re migration Alembic, état courant +
-  journal append-only. Mapping domaine ↔ tables.
-- **L4 — Adaptateurs** : inbound FastAPI (créer/éditer/archiver/remplir rôles — INV-5),
-  outbound `fake` en mémoire. Lecture d'audit (INV-6).
-- **L5 — Adaptateur Nextcloud** : `outbound/nextcloud/`, traduction des décisions vers
-  groupfolders / partages. Aucune logique de décision dedans.
+- L1 — Cœur + adaptateur Nextcloud : dimensions, valeurs de dimension, espaces
+  dimensionnels, coordonnées, matrice de droits, modes (Hériter/Modifier/Refuser),
+  renversement (priorité produit n°1), groupes (perso/orga), octrois (état courant),
+  ressources + ressource_mapping, journal append-only. Adaptateur Nextcloud réel
+  (files_accesscontrol, WebDAV, Group Folders). Fondation complète et démontrable.
+- L2 — Transverses & montages : modèles, instances, montages à deux clés (consentement
+  hôte), portée de montage, pattern self-service (montage dans espace personnel).
+- L3 — Métadonnées & sas : schéma de métadonnées par modèle, 3 permissions de méta,
+  workflow de validation (gate) sur tout delta qui élargit un accès.
+- L4 — Intégration ERP (Odoo) : webhook idempotent (réconciliation sur odoo_project_id),
+  re-routing (changement de société = démontage doux + gel), estampillage d'origine.
+  La COUTURE (ressource_mapping, cle_reconciliation, systeme_reference, point d'entrée
+  "changement → sas") est conçue dès L1-L3 ; le connecteur est branché ici.
+- L5 — Adaptateurs additionnels : mail (IMAP/SMTP), bâtiment (contrôleur de portes).
+  Valide l'agnosticité a posteriori.
+
+### Séquence de travail INTERNE au L1 (étapes, pas des lots)
+1. Domaine : value objects (Matrice, Mode, Dimension, ValeurDimension) + entités
+   (Espace, Groupe, Ressource), frozen dataclasses stdlib, invariants dans les types.
+2. Services du cœur : renversement (projection navigation, lecture pure) + calcul des
+   droits effectifs (héritage + modes, à instant figé INV-3).
+3. Ports : contrat AdaptateurRessource (créer/archiver/renommer/appliquerDroits/
+   lireDroitsEffectifs) + adaptateur fake en mémoire pour tests.
+4. Persistance : modèles SQLAlchemy + migration Alembic, état courant + journal
+   append-only (garde-fou anti UPDATE/DELETE).
+5. Adaptateur Nextcloud réel (arrive en dernier dans L1, prouve l'agnosticité).
 
 ## 7. Notes d'environnement
 
