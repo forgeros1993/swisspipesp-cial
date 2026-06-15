@@ -124,3 +124,67 @@ def test_lire_droits_effectifs_acl_fine() -> None:
         if cle is not None:
             executer_occ(["groupfolders:delete", str(cle), "--force"])
             _nettoyer_acl_orphelins()
+
+
+def _creer_folder_test(adaptateur: AdaptateurNextcloud, nom: str) -> str:
+    cle = adaptateur.creer_ressource(DescripteurRessource(type="folder", chemin="/", nom=nom))
+    assert int(cle) > _ID_PROD_MAX, "SÉCURITÉ : jamais un id de prod"
+    return cle
+
+
+def test_appliquer_droits_round_trip() -> None:
+    if not _serveur_accessible():
+        pytest.skip(f"serveur SSH '{NEXTCLOUD_SSH_ALIAS}' injoignable — test C2 skippé")
+
+    adaptateur = AdaptateurNextcloud("", "", "")
+    cle: str | None = None
+    etat = frozenset({DroitGroupe("admin", Matrice(NiveauPrincipal.ECRITURE))})
+    try:
+        cle = _creer_folder_test(adaptateur, "zztest_swisspipe_apply_rt")
+        adaptateur.appliquer_droits(cle, etat)
+        # appliquer -> lire = identité (réconciliation grandeur nature).
+        assert adaptateur.lire_droits_effectifs(cle) == etat
+    finally:
+        if cle is not None:
+            executer_occ(["groupfolders:delete", str(cle), "--force"])
+            _nettoyer_acl_orphelins()
+
+
+def test_appliquer_droits_idempotent() -> None:
+    if not _serveur_accessible():
+        pytest.skip(f"serveur SSH '{NEXTCLOUD_SSH_ALIAS}' injoignable — test C2 skippé")
+
+    adaptateur = AdaptateurNextcloud("", "", "")
+    cle: str | None = None
+    etat = frozenset({DroitGroupe("admin", Matrice(NiveauPrincipal.SUPPRESSION))})
+    try:
+        cle = _creer_folder_test(adaptateur, "zztest_swisspipe_apply_idem")
+        adaptateur.appliquer_droits(cle, etat)
+        premier = adaptateur.lire_droits_effectifs(cle)
+        adaptateur.appliquer_droits(cle, etat)  # ré-application du même état
+        second = adaptateur.lire_droits_effectifs(cle)
+        assert premier == second == etat
+        assert len(second) == 1  # pas de doublon
+    finally:
+        if cle is not None:
+            executer_occ(["groupfolders:delete", str(cle), "--force"])
+            _nettoyer_acl_orphelins()
+
+
+def test_appliquer_droits_reconciliation_retrait() -> None:
+    if not _serveur_accessible():
+        pytest.skip(f"serveur SSH '{NEXTCLOUD_SSH_ALIAS}' injoignable — test C2 skippé")
+
+    adaptateur = AdaptateurNextcloud("", "", "")
+    cle: str | None = None
+    try:
+        cle = _creer_folder_test(adaptateur, "zztest_swisspipe_apply_reco")
+        adaptateur.appliquer_droits(cle, {DroitGroupe("admin", Matrice(NiveauPrincipal.ECRITURE))})
+        assert adaptateur.lire_droits_effectifs(cle) != frozenset()
+        # État désiré vide -> le groupe fantôme est retiré.
+        adaptateur.appliquer_droits(cle, frozenset())
+        assert adaptateur.lire_droits_effectifs(cle) == frozenset()
+    finally:
+        if cle is not None:
+            executer_occ(["groupfolders:delete", str(cle), "--force"])
+            _nettoyer_acl_orphelins()

@@ -98,6 +98,38 @@ def permissions_nextcloud_vers_matrice(masque: int) -> Matrice | None:
     return Matrice(niveau, frozenset(additionnels))
 
 
+def matrice_vers_verbes_acl(matrice: Matrice) -> list[str]:
+    """Matrice -> liste de verbes ACL gouvernant les 5 verbes (`+verb`/`-verb`).
+
+    Gouverne TOUS les verbes explicitement (read/write/create/delete/share) pour que le
+    round-trip appliquer->lire soit symétrique (regle_acl_vers_matrice ne lit que les
+    bits gouvernés). Ordre déterministe : read, write, create, delete, share.
+
+    - read : toujours `+read` (toute matrice a au moins LECTURE).
+    - write (= update) : `+write` si niveau >= ÉCRITURE, sinon `-write`.
+    - delete : `+delete` si niveau == SUPPRESSION, sinon `-delete`.
+    - create : `+create` si additionnel CRÉATION, sinon `-create`.
+    - share : toujours `-share` (jamais octroyé).
+
+    CLASSEMENT / TÉLÉCHARGEMENT : pas de verbe ACL dédié (mapping non bijectif déjà
+    documenté) -> non traduits ici.
+    """
+    a_write = matrice.niveau.rang >= NiveauPrincipal.ECRITURE.rang
+    a_delete = matrice.niveau is NiveauPrincipal.SUPPRESSION
+    a_create = DroitAdditionnel.CREATION in matrice.additionnels
+
+    def verbe(nom: str, present: bool) -> str:
+        return ("+" if present else "-") + nom
+
+    return [
+        verbe("read", True),
+        verbe("write", a_write),
+        verbe("create", a_create),
+        verbe("delete", a_delete),
+        verbe("share", False),
+    ]
+
+
 def regle_acl_vers_matrice(mask: int, permissions: int) -> Matrice | None:
     """Règle ACL Group Folders (`mask` + `permissions`) -> Matrice abstraite.
 

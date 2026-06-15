@@ -24,6 +24,7 @@ from swisspipe.adapters.outbound.nextcloud.occ_runner import executer_occ
 from swisspipe.adapters.outbound.nextcloud.sql_runner import executer_select
 from swisspipe.adapters.outbound.nextcloud.traduction import (
     matrice_vers_permissions_nextcloud,
+    matrice_vers_verbes_acl,
     permissions_nextcloud_vers_matrice,
     regle_acl_vers_matrice,
 )
@@ -115,7 +116,57 @@ class AdaptateurNextcloud:
             self._occ(["groupfolders:group", str(cle_externe), groupe_id, "-d"])
 
     def appliquer_droits(self, cle_externe: str, droits: Collection[DroitGroupe]) -> None:
-        raise NotImplementedError("Tranche C — mapping fin des permissions")
+        """Réalise l'état COMPLET désiré en ACL fine sur le chemin racine (idempotent).
+
+        - Active l'ACL (`-e`, idempotent).
+        - Pour chaque groupe désiré : `clear` puis pose des 5 verbes (gouvernés) via
+          matrice_vers_verbes_acl -> round-trip symétrique avec lire (C1).
+        - Réconciliation : tout groupe qui avait une règle racine et n'est PLUS dans
+          l'état désiré est `clear` (retrait de l'accès fantôme).
+
+        INV-4 : groupes uniquement (`-g`), jamais de user/circle direct. État complet,
+        pas un diff. Tranche C2 : chemin racine (cohérent avec C1).
+        """
+        folder = self._folder_par_id(cle_externe)
+        if folder is None:
+            raise KeyError(f"Group Folder introuvable : {cle_externe!r}")
+
+        desire: dict[str, DroitGroupe] = {}
+        for d in droits:
+            if not d.groupe_id:
+                raise ValueError("DroitGroupe sans groupe_id (INV-4 : un groupe, jamais vide)")
+            desire[d.groupe_id] = d
+
+        self._occ(["groupfolders:permissions", str(cle_externe), "-e"])
+        actuels = self._groupes_acl_racine(folder)
+
+        for groupe_id, dg in desire.items():
+            self._poser_regle(cle_externe, groupe_id, matrice_vers_verbes_acl(dg.matrice))
+        for groupe_id in actuels - set(desire):
+            self._poser_regle(cle_externe, groupe_id, ["clear"])
+
+    def _poser_regle(self, cle_externe: str, groupe_id: str, verbes: list[str]) -> None:
+        base = ["groupfolders:permissions", str(cle_externe), "/", "-g", groupe_id, "--"]
+        # clear systématique avant pose -> état net, idempotent.
+        self._occ([*base, "clear"])
+        if verbes != ["clear"]:
+            self._occ([*base, *verbes])
+
+    def _groupes_acl_racine(self, folder: dict[str, Any]) -> set[str]:
+        lignes = executer_select(
+            "SELECT a.mapping_type, a.mapping_id, c.path "
+            "FROM {p}group_folders_acl a "
+            "JOIN {p}filecache c ON c.fileid = a.fileid "
+            "WHERE c.storage = ?",
+            [folder["storageId"]],
+            alias=self._ssh_alias,
+            occ_dir=self._occ_dir,
+        )
+        return {
+            str(ligne["mapping_id"])
+            for ligne in lignes
+            if ligne.get("path") in _CHEMINS_RACINE and ligne["mapping_type"] == "group"
+        }
 
     def lire_droits_effectifs(self, cle_externe: str) -> frozenset[DroitGroupe]:
         """Relit l'état réel d'un Group Folder (réconciliation / détection de dérive).

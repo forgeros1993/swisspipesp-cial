@@ -11,6 +11,7 @@ from swisspipe.adapters.outbound.nextcloud.adaptateur_nextcloud import Adaptateu
 from swisspipe.adapters.outbound.nextcloud.occ_runner import NEXTCLOUD_SSH_ALIAS
 from swisspipe.adapters.outbound.nextcloud.traduction import (
     matrice_vers_permissions_nextcloud,
+    matrice_vers_verbes_acl,
     permissions_nextcloud_vers_matrice,
     regle_acl_vers_matrice,
 )
@@ -177,12 +178,9 @@ def test_traduire_droits_est_reel() -> None:
     assert a.traduire_droits(droits) == {"g1": 3, "g2": 5}
 
 
-def test_appliquer_droits_reste_notimplemented() -> None:
-    # Tranche C : appliquer_droits non implémenté (creer/renommer/archiver = Tranche B,
-    # lire = Tranche A ; testés par les tests d'intégration skippables).
-    a = AdaptateurNextcloud(*CONFIG)
-    with pytest.raises(NotImplementedError):
-        a.appliquer_droits("cle", [DroitGroupe("g1", _m(NiveauPrincipal.LECTURE))])
+# Les 5 méthodes du port sont désormais implémentées (A: lire ; B: creer/renommer/
+# archiver ; C2: appliquer_droits). Le comportement réel est couvert par les tests
+# d'intégration skippables (round-trip appliquer->lire, idempotence, réconciliation).
 
 
 # ---------------------------------------------------------------------------
@@ -259,6 +257,55 @@ def test_acl_ecriture_creation() -> None:
 def test_acl_mask_nul_donne_none() -> None:
     # Rien de gouverné -> mask&permissions=0 -> None.
     assert regle_acl_vers_matrice(0, 31) is None
+
+
+# ---------------------------------------------------------------------------
+# Matrice -> verbes ACL (gouverne les 5 verbes) — pur, toujours vert
+# ---------------------------------------------------------------------------
+
+
+def test_verbes_lecture() -> None:
+    assert matrice_vers_verbes_acl(_m(NiveauPrincipal.LECTURE)) == [
+        "+read", "-write", "-create", "-delete", "-share",
+    ]
+
+
+def test_verbes_ecriture() -> None:
+    assert matrice_vers_verbes_acl(_m(NiveauPrincipal.ECRITURE)) == [
+        "+read", "+write", "-create", "-delete", "-share",
+    ]
+
+
+def test_verbes_suppression() -> None:
+    assert matrice_vers_verbes_acl(_m(NiveauPrincipal.SUPPRESSION)) == [
+        "+read", "+write", "-create", "+delete", "-share",
+    ]
+
+
+def test_verbes_ecriture_creation() -> None:
+    assert matrice_vers_verbes_acl(
+        _m(NiveauPrincipal.ECRITURE, DroitAdditionnel.CREATION)
+    ) == ["+read", "+write", "+create", "-delete", "-share"]
+
+
+def test_verbes_round_trip_via_inverse() -> None:
+    # Les verbes posés se relisent en la même matrice (symétrie appliquer->lire).
+    for matrice in (
+        _m(NiveauPrincipal.LECTURE),
+        _m(NiveauPrincipal.ECRITURE),
+        _m(NiveauPrincipal.SUPPRESSION),
+        _m(NiveauPrincipal.ECRITURE, DroitAdditionnel.CREATION),
+    ):
+        verbes = matrice_vers_verbes_acl(matrice)
+        mask = 0
+        permissions = 0
+        bits = {"read": 1, "write": 2, "create": 4, "delete": 8, "share": 16}
+        for v in verbes:
+            signe, nom = v[0], v[1:]
+            mask |= bits[nom]
+            if signe == "+":
+                permissions |= bits[nom]
+        assert regle_acl_vers_matrice(mask, permissions) == matrice
 
 
 # ---------------------------------------------------------------------------
