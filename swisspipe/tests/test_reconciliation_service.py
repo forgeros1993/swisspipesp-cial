@@ -6,6 +6,7 @@ Via AdaptateurMemoire (fake, SANS réseau) + session Postgres (fixture db_sessio
 from __future__ import annotations
 
 import uuid
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import select
@@ -16,6 +17,7 @@ from swisspipe.application.reconciliation_service import (
     _NS_GROUPE_NC,
     RessourceNonMappeeError,
     reconcilier_ressource,
+    reconcilier_tout,
 )
 from swisspipe.core.domain.matrice import Matrice, NiveauPrincipal
 from swisspipe.core.domain.octroi import Octroi
@@ -248,3 +250,161 @@ def test_derive_groupe_externe_inconnu_du_coeur_est_trace(db_session: Session) -
     # identité du groupe externe préservée + uuid déterministe (joignable, stable).
     assert j.cause["groupe_nc"] == "g_externe"
     assert j.groupe_id == uuid.uuid5(_NS_GROUPE_NC, "g_externe")
+
+
+# ===========================================================================
+# Balayage en masse — reconcilier_tout
+# ===========================================================================
+
+
+class _FakeResilient(AdaptateurMemoire):
+    """Fake partagé par plusieurs ressources ; lève sur les cle_externe marquées cassées."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.cles_cassees: set[str] = set()
+
+    def lire_droits_effectifs(self, cle_externe):  # type: ignore[no-untyped-def]
+        if cle_externe in self.cles_cassees:
+            raise RuntimeError("boom lecture NC")
+        return super().lire_droits_effectifs(cle_externe)
+
+
+def _creer_dans(
+    session: Session, fake: AdaptateurMemoire, groupe_cle: str
+) -> tuple[uuid.UUID, str]:
+    """Crée une ressource (octroi {groupe_cle: ÉCRITURE}) mappée au `fake`. Pas de seed."""
+    espace = Espace(
+        nature=NatureEspace.DIMENSIONNEL,
+        combinaison_signature=signature_combinaison([("t", uuid.uuid4().hex)]),
+    )
+    session.add(espace)
+    session.flush()
+    ressource = Ressource(type="folder", espace_id=espace.id, chemin="/")
+    session.add(ressource)
+    session.flush()
+    groupe = Groupe(type=TypeGroupe.ORGANISATIONNEL, cle=groupe_cle)
+    session.add(groupe)
+    session.flush()
+    session.add(
+        OctroiModel(
+            ressource_id=ressource.id,
+            groupe_id=groupe.id,
+            mode=Octroi.modifier(ECRITURE).mode,
+            matrice=ECRITURE.vers_jsonb(),
+        )
+    )
+    session.flush()
+    cle = fake.creer_ressource(DescripteurRessource(type="folder", chemin="/", nom="zz"))
+    session.add(
+        RessourceMapping(ressource_id=ressource.id, adaptateur="nextcloud", cle_externe=cle)
+    )
+    session.flush()
+    return ressource.id, cle
+
+
+def test_balayage_resilient(db_session: Session) -> None:
+    fake = _FakeResilient()
+    # 3 ressources partageant le même fake (octroi gX -> ÉCRITURE chacune).
+    r0 = _creer_dans(db_session, fake, "g0")
+    r1 = _creer_dans(db_session, fake, "g1")
+    r2 = _creer_dans(db_session, fake, "g2")
+    par_id = {rid: (rid, cle) for rid, cle in (r0, r1, r2)}
+
+    # Ordre du balayage = tri par ressource_id. On place la CASSÉE en premier.
+    ordonnes = sorted(par_id)  # ressource_ids triés
+    cassee_id, cassee_cle = par_id[ordonnes[0]]
+    reparable_id, reparable_cle = par_id[ordonnes[1]]
+    conforme_id, conforme_cle = par_id[ordonnes[2]]
+
+    fake.cles_cassees.add(cassee_cle)  # la 1re traitée lève -> erreur
+    # conforme : on seed le réel == désiré (le groupe de cette ressource = g{index}).
+    # On retrouve le groupe via l'octroi : chaque ressource a un seul groupe ÉCRITURE.
+    conforme_groupe = db_session.execute(
+        select(Groupe.cle)
+        .join(OctroiModel, OctroiModel.groupe_id == Groupe.id)
+        .where(OctroiModel.ressource_id == conforme_id)
+    ).scalar_one()
+    fake.appliquer_droits(conforme_cle, {DroitGroupe(conforme_groupe, ECRITURE)})
+    # reparable : réel laissé vide -> son groupe est manquant -> reparee.
+
+    db_session.commit()  # en prod les octrois préexistent ; on fige le setup avant le balayage
+
+    rapport = reconcilier_tout(db_session, fake)
+
+    statuts = {r.ressource_id: r.statut for r in rapport.resultats}
+    assert statuts[cassee_id] == "erreur"
+    assert statuts[reparable_id] == "reparee"
+    assert statuts[conforme_id] == "conforme"
+    # Agrégats justes.
+    assert rapport.total == 3
+    assert rapport.nb_conformes == 1
+    assert rapport.nb_reparees == 1
+    assert rapport.nb_erreurs == 1
+    # Le message d'erreur est classifié.
+    err = next(r for r in rapport.resultats if r.statut == "erreur")
+    assert err.erreur is not None and "RuntimeError" in err.erreur
+    # CŒUR DU TEST : la réparable est RÉELLEMENT réparée MALGRÉ l'erreur précoce.
+    reparable_groupe = db_session.execute(
+        select(Groupe.cle)
+        .join(OctroiModel, OctroiModel.groupe_id == Groupe.id)
+        .where(OctroiModel.ressource_id == reparable_id)
+    ).scalar_one()
+    assert fake.lire_droits_effectifs(reparable_cle) == frozenset(
+        {DroitGroupe(reparable_groupe, ECRITURE)}
+    )
+
+
+def test_balayage_tout_conforme(db_session: Session) -> None:
+    fake = AdaptateurMemoire()
+    for i in range(3):
+        rid, cle = _creer_dans(db_session, fake, f"gc{i}")
+        groupe = db_session.execute(
+            select(Groupe.cle)
+            .join(OctroiModel, OctroiModel.groupe_id == Groupe.id)
+            .where(OctroiModel.ressource_id == rid)
+        ).scalar_one()
+        fake.appliquer_droits(cle, {DroitGroupe(groupe, ECRITURE)})  # réel == désiré
+
+    rapport = reconcilier_tout(db_session, fake)
+
+    assert rapport.total == 3
+    assert rapport.nb_conformes == 3
+    assert rapport.nb_reparees == 0
+    assert rapport.nb_erreurs == 0
+
+
+def test_balayage_vide(db_session: Session) -> None:
+    rapport = reconcilier_tout(db_session, AdaptateurMemoire())
+    assert rapport.total == 0
+    assert rapport.resultats == ()
+    assert rapport.nb_erreurs == 0
+
+
+def test_commit_par_ressource(db_session: Session) -> None:
+    # 2 ressources OK (conformes) + 1 cassée -> 2 commits, 1 rollback.
+    fake = _FakeResilient()
+    ok = []
+    for i in range(2):
+        rid, cle = _creer_dans(db_session, fake, f"gok{i}")
+        groupe = db_session.execute(
+            select(Groupe.cle)
+            .join(OctroiModel, OctroiModel.groupe_id == Groupe.id)
+            .where(OctroiModel.ressource_id == rid)
+        ).scalar_one()
+        fake.appliquer_droits(cle, {DroitGroupe(groupe, ECRITURE)})
+        ok.append(rid)
+    _, cle_cassee = _creer_dans(db_session, fake, "gko")
+    fake.cles_cassees.add(cle_cassee)
+    db_session.commit()  # fige le setup avant de compter les commits du balayage
+
+    with (
+        patch.object(db_session, "commit", wraps=db_session.commit) as spy_commit,
+        patch.object(db_session, "rollback", wraps=db_session.rollback) as spy_rollback,
+    ):
+        rapport = reconcilier_tout(db_session, fake)
+
+    assert spy_commit.call_count == 2  # 1 par ressource non-erreur
+    assert spy_rollback.call_count == 1  # la cassée
+    assert rapport.nb_conformes == 2
+    assert rapport.nb_erreurs == 1

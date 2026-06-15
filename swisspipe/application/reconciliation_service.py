@@ -21,6 +21,7 @@ Décisions actées :
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -183,3 +184,73 @@ def _tracer(
             acteur=ACTEUR,
         )
     )
+
+
+@dataclass(frozen=True)
+class ResultatRessource:
+    """Issue de la réconciliation d'UNE ressource lors d'un balayage."""
+
+    ressource_id: uuid.UUID
+    statut: str  # "conforme" | "reparee" | "erreur"
+    divergence: Divergence | None = None
+    erreur: str | None = None  # "TypeErreur: message" si statut == "erreur"
+
+
+@dataclass(frozen=True)
+class RapportReconciliation:
+    """Agrégat du balayage. Une ressource en erreur n'arrête jamais le balayage."""
+
+    resultats: tuple[ResultatRessource, ...] = field(default_factory=tuple)
+
+    @property
+    def total(self) -> int:
+        return len(self.resultats)
+
+    @property
+    def nb_conformes(self) -> int:
+        return sum(1 for r in self.resultats if r.statut == "conforme")
+
+    @property
+    def nb_reparees(self) -> int:
+        return sum(1 for r in self.resultats if r.statut == "reparee")
+
+    @property
+    def nb_erreurs(self) -> int:
+        return sum(1 for r in self.resultats if r.statut == "erreur")
+
+    @property
+    def ressources_en_erreur(self) -> tuple[ResultatRessource, ...]:
+        return tuple(r for r in self.resultats if r.statut == "erreur")
+
+
+def reconcilier_tout(
+    session: Session,
+    adaptateur: AdaptateurRessource,
+    *,
+    declencheur: str = "auto",
+) -> RapportReconciliation:
+    """Balaie TOUTES les ressources mappées Nextcloud et réconcilie chacune. RÉSILIENT.
+
+    Commit PAR ressource (les réparations déjà faites survivent à une erreur ultérieure) ;
+    sur exception -> rollback du partiel de CETTE ressource puis on continue. On capture
+    `Exception` (générique) : l'orchestrateur en masse pilote un AdaptateurRessource et ne
+    connaît PAS les exceptions concrètes d'un adaptateur (agnosticité préservée). Ordre
+    déterministe (par ressource_id) -> balayage reproductible.
+    """
+    ids = session.scalars(
+        select(RessourceMapping.ressource_id)
+        .where(RessourceMapping.adaptateur == ADAPTATEUR)
+        .order_by(RessourceMapping.ressource_id)
+    ).all()
+
+    resultats: list[ResultatRessource] = []
+    for rid in ids:
+        try:
+            div = reconcilier_ressource(session, adaptateur, rid, declencheur=declencheur)
+            session.commit()
+            statut = "conforme" if div.est_conforme else "reparee"
+            resultats.append(ResultatRessource(rid, statut, divergence=div))
+        except Exception as e:
+            session.rollback()
+            resultats.append(ResultatRessource(rid, "erreur", erreur=f"{type(e).__name__}: {e}"))
+    return RapportReconciliation(tuple(resultats))
