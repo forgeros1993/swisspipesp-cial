@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from swisspipe.core.domain.matrice import Matrice, NiveauPrincipal
+from swisspipe.core.domain.matrice import DroitAdditionnel, Matrice, NiveauPrincipal
 from swisspipe.core.domain.octroi import Octroi
 from swisspipe.core.services.droits_effectifs import (
     DroitEffectif,
@@ -125,13 +125,64 @@ def test_aucun_octroi_du_tout_aucun_droit() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Combinaison multi-groupes : trou documenté
+# Combinaison multi-groupes (D6 : modèle additif)
 # ---------------------------------------------------------------------------
 
 
-def test_droit_effectif_compte_non_implemente() -> None:
-    with pytest.raises(NotImplementedError):
-        droit_effectif_compte(["g1", "g2"], "petit", PARENTS, {})
+def test_compte_un_seul_groupe_egal_groupe() -> None:
+    octrois = {("racine", G): Octroi.modifier(ECRITURE), ("enfant", G): Octroi.heriter()}
+    compte = droit_effectif_compte([G], "enfant", PARENTS, octrois)
+    assert compte == droit_effectif_groupe("enfant", G, PARENTS, octrois)
+
+
+def test_cas_cedric_refuser_un_groupe_positif_autre() -> None:
+    # « Salaires direction » : REFUSER pour Finance, positif pour Direction.
+    parents: dict[str, str | None] = {"salaires": None}
+    octrois = {
+        ("salaires", "finance"): Octroi.refuser(),
+        ("salaires", "direction"): Octroi.modifier(ECRITURE),
+    }
+    # Marie ∈ {Finance, Direction} -> voit le dossier via Direction.
+    marie = droit_effectif_compte(["finance", "direction"], "salaires", parents, octrois)
+    assert marie.accessible is True
+    assert marie.matrice == ECRITURE
+    # Quelqu'un uniquement dans Finance -> bloqué via son groupe -> aucun accès.
+    paul = droit_effectif_compte(["finance"], "salaires", parents, octrois)
+    assert paul.accessible is False
+    assert paul.bloque is False  # côté compte : aucun, pas « bloqué »
+
+
+def test_compte_deux_positifs_union() -> None:
+    parents: dict[str, str | None] = {"r": None}
+    octrois = {
+        ("r", "a"): Octroi.modifier(Matrice(NiveauPrincipal.LECTURE, {DroitAdditionnel.CREATION})),
+        ("r", "b"): Octroi.modifier(Matrice(NiveauPrincipal.ECRITURE)),
+    }
+    res = droit_effectif_compte(["a", "b"], "r", parents, octrois)
+    assert res.matrice == Matrice(NiveauPrincipal.ECRITURE, {DroitAdditionnel.CREATION})
+
+
+def test_compte_tous_rien_aucun_acces() -> None:
+    parents: dict[str, str | None] = {"r": None}
+    octrois = {("r", "a"): Octroi.refuser(), ("r", "b"): Octroi.heriter()}
+    res = droit_effectif_compte(["a", "b"], "r", parents, octrois)
+    assert res.accessible is False
+    assert res.matrice is None and res.bloque is False
+
+
+def test_compte_sans_groupe_aucun_acces() -> None:
+    assert droit_effectif_compte([], "petit", PARENTS, {}).accessible is False
+
+
+def test_compte_determinisme_ordre_groupes() -> None:
+    parents: dict[str, str | None] = {"r": None}
+    octrois = {
+        ("r", "a"): Octroi.modifier(Matrice(NiveauPrincipal.LECTURE, {DroitAdditionnel.CREATION})),
+        ("r", "b"): Octroi.modifier(Matrice(NiveauPrincipal.ECRITURE)),
+    }
+    assert droit_effectif_compte(["a", "b"], "r", parents, octrois) == droit_effectif_compte(
+        ["b", "a"], "r", parents, octrois
+    )
 
 
 # ---------------------------------------------------------------------------

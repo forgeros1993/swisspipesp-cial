@@ -128,6 +128,38 @@ def test_couvre_reflexif() -> None:
 
 
 # ---------------------------------------------------------------------------
+# fusionner() — union des droits (combinaison multi-groupes additive)
+# ---------------------------------------------------------------------------
+
+
+def test_fusionner_prend_niveau_max_et_additionnels_unis() -> None:
+    a = Matrice(NiveauPrincipal.LECTURE, {DroitAdditionnel.CREATION})
+    b = Matrice(NiveauPrincipal.ECRITURE, {DroitAdditionnel.CLASSEMENT})
+    attendu = Matrice(
+        NiveauPrincipal.ECRITURE, {DroitAdditionnel.CREATION, DroitAdditionnel.CLASSEMENT}
+    )
+    assert a.fusionner(b) == attendu
+
+
+def test_fusionner_commutatif() -> None:
+    a = Matrice(NiveauPrincipal.LECTURE, {DroitAdditionnel.CREATION})
+    b = Matrice(NiveauPrincipal.SUPPRESSION)
+    assert a.fusionner(b) == b.fusionner(a)
+
+
+def test_fusionner_idempotent() -> None:
+    m = Matrice(NiveauPrincipal.ECRITURE, {DroitAdditionnel.TELECHARGEMENT})
+    assert m.fusionner(m) == m
+
+
+def test_fusionner_ne_retire_aucun_droit() -> None:
+    a = Matrice(NiveauPrincipal.SUPPRESSION, {DroitAdditionnel.CREATION})
+    b = Matrice(NiveauPrincipal.LECTURE)
+    fusion = a.fusionner(b)
+    assert fusion.couvre(a) and fusion.couvre(b)
+
+
+# ---------------------------------------------------------------------------
 # Sérialisation jsonb (round-trip)
 # ---------------------------------------------------------------------------
 

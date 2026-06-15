@@ -101,6 +101,18 @@ class Matrice:
         """
         return self.niveau.inclut(autre.niveau) and autre.additionnels <= self.additionnels
 
+    def fusionner(self, autre: Matrice) -> Matrice:
+        """Union des droits de deux matrices : niveau le plus haut + additionnels unis.
+
+        Sert à la combinaison multi-groupes additive (modèle tranché par Cédric, D6 du
+        journal des questions ouvertes) : on ne RETIRE jamais un droit qu'une des
+        matrices accorde — on prend le maximum. Le niveau résultant est le plus élevé
+        des deux (Lecture<Écriture<Suppression) et les additionnels sont l'union.
+        Commutatif et idempotent (`m.fusionner(m) == m`).
+        """
+        niveau = self.niveau if self.niveau.rang >= autre.niveau.rang else autre.niveau
+        return Matrice(niveau, self.additionnels | autre.additionnels)
+
     def vers_jsonb(self) -> dict[str, Any]:
         """Sérialise vers le format jsonb spec. Additionnels triés -> sortie stable."""
         return {

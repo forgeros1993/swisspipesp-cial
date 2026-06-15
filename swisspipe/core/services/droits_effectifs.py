@@ -11,12 +11,13 @@ réel — il lit l'état fourni). NE FAIT PAS encore (placeholders architecturau
 - la résolution des rôles (§9.3 point 4) -> L2 ;
 - le multi-espaces -> L2.
 
-TROU DOCUMENTÉ — COMBINAISON MULTI-GROUPES (décision en attente, Cédric) :
-un compte porte plusieurs groupes (personnel + organisationnels) ; sur une ressource,
-chacun peut donner un droit différent. La règle de combinaison (le plus permissif
-gagne ? un REFUSER sur un groupe écrase-t-il un octroi positif d'un autre ?) n'est PAS
-tranchée par la spec disponible. `droit_effectif_compte` expose la future signature
-mais lève NotImplementedError tant que la règle n'est pas fixée.
+COMBINAISON MULTI-GROUPES — modèle ADDITIF (tranché par Cédric, D6) :
+un compte porte plusieurs groupes (personnel + organisationnels). Le droit positif le
+plus permissif gagne à travers l'ensemble des groupes. Un REFUSER ne bloque l'accès QUE
+via le groupe sur lequel il porte (il coupe l'héritage POUR CE GROUPE) ; entre les
+groupes on prend le MAXIMUM des droits positifs — un REFUSER n'écrase jamais le positif
+d'un autre groupe. `droit_effectif_compte` implémente cette règle (union via
+Matrice.fusionner).
 
 Représentation d'entrée (la plus simple, en structures stdlib) :
 - `parents` : Mapping[str, str | None] — ressource_id -> parent_id (None = racine).
@@ -122,13 +123,29 @@ def droit_effectif_compte(
     parents: Mapping[str, str | None],
     octrois: Mapping[tuple[str, str], Octroi],
 ) -> DroitEffectif:
-    """Droit effectif d'un COMPTE (plusieurs groupes) — combinaison. NON IMPLÉMENTÉ.
+    """Droit effectif d'un COMPTE (plusieurs groupes) — combinaison additive (D6).
 
-    Signature prête pour L2/quand la règle sera fixée. Combinera les résultats
-    `droit_effectif_groupe` de chaque groupe du compte.
+    Pour chaque groupe : `droit_effectif_groupe` (gère héritage + REFUSER AU NIVEAU du
+    groupe). Un groupe qui aboutit à REFUSER (bloqué) ou à aucun droit contribue RIEN.
+    Entre les groupes, on prend l'UNION des droits positifs (Matrice.fusionner : niveau
+    max + additionnels unis) — le droit le plus permissif gagne. Un REFUSER sur un
+    groupe n'écrase JAMAIS le positif d'un autre groupe (cas Cédric : Marie voit le
+    dossier via Direction même si Finance le refuse).
+
+    Le résultat combiné n'est donc JAMAIS « bloqué » : il est positif, ou
+    `aucun()` (deny-by-default) si aucun groupe ne donne de droit positif.
+    Pur et déterministe (la fusion est commutative -> indépendant de l'ordre des groupes).
     """
-    raise NotImplementedError(
-        # DÉCISION EN ATTENTE (Cédric) : règle de combinaison multi-groupes, notamment
-        # priorité d'un REFUSER sur un octroi positif d'un autre groupe. Voir §9.x.
-        "combinaison multi-groupes non tranchée par la spec — voir docstring du module"
-    )
+    matrice_combinee: Matrice | None = None
+    for groupe_id in groupe_ids:
+        res = droit_effectif_groupe(ressource_id, groupe_id, parents, octrois)
+        # res.matrice is None couvre les deux cas « rien » : bloqué (REFUSER) et aucun.
+        if res.matrice is None:
+            continue
+        matrice_combinee = (
+            res.matrice if matrice_combinee is None else matrice_combinee.fusionner(res.matrice)
+        )
+
+    if matrice_combinee is None:
+        return DroitEffectif.aucun()
+    return DroitEffectif.accorde(matrice_combinee)
