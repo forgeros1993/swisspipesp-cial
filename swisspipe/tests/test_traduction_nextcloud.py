@@ -12,6 +12,7 @@ from swisspipe.adapters.outbound.nextcloud.occ_runner import NEXTCLOUD_SSH_ALIAS
 from swisspipe.adapters.outbound.nextcloud.traduction import (
     matrice_vers_permissions_nextcloud,
     permissions_nextcloud_vers_matrice,
+    regle_acl_vers_matrice,
 )
 from swisspipe.core.domain.matrice import DroitAdditionnel, Matrice, NiveauPrincipal
 from swisspipe.core.ports.adaptateur_ressource import (
@@ -221,6 +222,43 @@ def test_inverse_0_aucun_droit() -> None:
 def test_inverse_share_seul_sans_read_aucun_droit() -> None:
     # 16 = share seul, pas de read -> aucun droit.
     assert permissions_nextcloud_vers_matrice(16) is None
+
+
+# ---------------------------------------------------------------------------
+# Règle ACL (mask + permissions) -> Matrice — pur, toujours vert
+# ---------------------------------------------------------------------------
+
+
+def test_acl_read_write_governe_write_deny_donne_lecture() -> None:
+    # +read -write : mask=3 (read+write gouvernés), permissions=1 (read allow, write deny).
+    assert regle_acl_vers_matrice(3, 1) == Matrice(NiveauPrincipal.LECTURE)
+
+
+def test_acl_deny_read_donne_refuser_none() -> None:
+    # -read : mask=3, permissions=0 -> aucun read autorisé -> REFUSER -> None.
+    assert regle_acl_vers_matrice(3, 0) is None
+
+
+def test_acl_tout_gouverne_read_seul_lecture() -> None:
+    # mask=31 (tous verbes gouvernés), permissions=1 (read seul) -> LECTURE.
+    assert regle_acl_vers_matrice(31, 1) == Matrice(NiveauPrincipal.LECTURE)
+
+
+def test_acl_suppression() -> None:
+    # mask=31, permissions=11 (read+write+delete) -> SUPPRESSION.
+    assert regle_acl_vers_matrice(31, 11) == Matrice(NiveauPrincipal.SUPPRESSION)
+
+
+def test_acl_ecriture_creation() -> None:
+    # mask=31, permissions=7 (read+write+create) -> ÉCRITURE + CRÉATION.
+    assert regle_acl_vers_matrice(31, 7) == Matrice(
+        NiveauPrincipal.ECRITURE, {DroitAdditionnel.CREATION}
+    )
+
+
+def test_acl_mask_nul_donne_none() -> None:
+    # Rien de gouverné -> mask&permissions=0 -> None.
+    assert regle_acl_vers_matrice(0, 31) is None
 
 
 # ---------------------------------------------------------------------------

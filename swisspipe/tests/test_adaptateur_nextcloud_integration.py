@@ -13,8 +13,13 @@ import subprocess
 import pytest
 
 from swisspipe.adapters.outbound.nextcloud.adaptateur_nextcloud import AdaptateurNextcloud
-from swisspipe.adapters.outbound.nextcloud.occ_runner import NEXTCLOUD_SSH_ALIAS, executer_occ
-from swisspipe.core.ports.adaptateur_ressource import DescripteurRessource
+from swisspipe.adapters.outbound.nextcloud.occ_runner import (
+    NEXTCLOUD_OCC_PATH,
+    NEXTCLOUD_SSH_ALIAS,
+    executer_occ,
+)
+from swisspipe.core.domain.matrice import Matrice, NiveauPrincipal
+from swisspipe.core.ports.adaptateur_ressource import DescripteurRessource, DroitGroupe
 
 # Au-delà des ids de prod (4-20). Garde-fou : le test refuse de toucher un id de prod.
 _ID_PROD_MAX = 20
@@ -30,6 +35,30 @@ def _serveur_accessible() -> bool:
         return proc.returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def _nettoyer_acl_orphelins() -> None:
+    """Supprime les règles ACL orphelines (fileid mort) — nettoyage de test uniquement.
+
+    Write DB ciblé : ne touche QUE les lignes dont le fileid n'existe plus en filecache
+    (folders supprimés). Jamais une règle vivante.
+    """
+    php = (
+        "<?php error_reporting(E_ERROR); $CONFIG=[]; require 'config/config.php';"
+        "$p=$CONFIG['dbtableprefix']??'oc_'; $h=$CONFIG['dbhost']; $port=3306;"
+        "if(strpos($h,':')!==false){list($h,$port)=explode(':',$h,2);}"
+        "$pdo=new PDO(\"mysql:host=$h;port=$port;dbname={$CONFIG['dbname']}\","
+        "$CONFIG['dbuser'],$CONFIG['dbpassword']);"
+        "$pdo->exec(\"DELETE FROM {$p}group_folders_acl WHERE fileid NOT IN "
+        "(SELECT fileid FROM {$p}filecache)\");"
+    )
+    subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", NEXTCLOUD_SSH_ALIAS, f"cd {NEXTCLOUD_OCC_PATH} && php"],
+        input=php,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
 
 
 def test_cycle_de_vie_creer_renommer_archiver() -> None:
@@ -66,3 +95,32 @@ def test_cycle_de_vie_creer_renommer_archiver() -> None:
         if cle is not None:
             # Nettoyage du folder jetable (delete dur OK ICI : test, pas prod).
             executer_occ(["groupfolders:delete", str(cle), "--force"])
+
+
+def test_lire_droits_effectifs_acl_fine() -> None:
+    if not _serveur_accessible():
+        pytest.skip(f"serveur SSH '{NEXTCLOUD_SSH_ALIAS}' injoignable — test ACL skippé")
+
+    adaptateur = AdaptateurNextcloud("", "", "")
+    cle: str | None = None
+    try:
+        cle = adaptateur.creer_ressource(
+            DescripteurRessource(type="folder", chemin="/", nom="zztest_swisspipe_aclread")
+        )
+        assert int(cle) > _ID_PROD_MAX, "SÉCURITÉ : jamais un id de prod"
+
+        # Donne accès au groupe admin au niveau folder, active l'ACL, puis pose une règle
+        # racine connue : +read, tout le reste deny -> LECTURE seule (mask 31, perms 1).
+        executer_occ(["groupfolders:group", cle, "admin", "read", "write"])
+        executer_occ(["groupfolders:permissions", cle, "-e"])
+        executer_occ(
+            ["groupfolders:permissions", cle, "/", "-g", "admin", "--",
+             "+read", "-write", "-create", "-delete", "-share"]
+        )
+
+        droits = adaptateur.lire_droits_effectifs(cle)
+        assert droits == frozenset({DroitGroupe("admin", Matrice(NiveauPrincipal.LECTURE))})
+    finally:
+        if cle is not None:
+            executer_occ(["groupfolders:delete", str(cle), "--force"])
+            _nettoyer_acl_orphelins()

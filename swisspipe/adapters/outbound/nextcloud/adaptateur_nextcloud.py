@@ -21,11 +21,16 @@ from collections.abc import Collection
 from typing import Any
 
 from swisspipe.adapters.outbound.nextcloud.occ_runner import executer_occ
+from swisspipe.adapters.outbound.nextcloud.sql_runner import executer_select
 from swisspipe.adapters.outbound.nextcloud.traduction import (
     matrice_vers_permissions_nextcloud,
     permissions_nextcloud_vers_matrice,
+    regle_acl_vers_matrice,
 )
 from swisspipe.core.ports.adaptateur_ressource import DescripteurRessource, DroitGroupe
+
+# Chemins racine du contenu d'un Group Folder dans filecache (selon versions NC).
+_CHEMINS_RACINE = ("files", "")
 
 
 class AdaptateurNextcloud:
@@ -115,16 +120,45 @@ class AdaptateurNextcloud:
     def lire_droits_effectifs(self, cle_externe: str) -> frozenset[DroitGroupe]:
         """Relit l'état réel d'un Group Folder (réconciliation / détection de dérive).
 
-        `cle_externe` = id du Group Folder (str). Traduit chaque (groupe -> masque) via
-        le sens inverse. Un masque sans bit read -> aucun droit, le groupe est omis.
+        `cle_externe` = id du Group Folder (str).
+        - ACL désactivée -> droits niveau folder (`groups_list`, sens inverse du masque).
+        - ACL activée -> règles fines par chemin lues en SQL (group_folders_acl), pour
+          CETTE tranche limitées au chemin RACINE du folder (la gestion par sous-chemin
+          viendra avec la notion de Ressource=chemin). Le JOIN sur filecache exclut
+          nativement les règles orphelines (folders supprimés).
+        Un groupe sans droit (deny read / masque sans read) est omis du frozenset.
         """
         cible = self._folder_par_id(cle_externe)
         if cible is None:
             raise KeyError(f"Group Folder introuvable : {cle_externe!r}")
 
+        if not cible.get("acl"):
+            return self._droits_niveau_folder(cible)
+        return self._droits_acl_racine(cible)
+
+    def _droits_niveau_folder(self, folder: dict[str, Any]) -> frozenset[DroitGroupe]:
         droits: set[DroitGroupe] = set()
-        for groupe_id, masque in (cible.get("groups_list") or {}).items():
+        for groupe_id, masque in (folder.get("groups_list") or {}).items():
             matrice = permissions_nextcloud_vers_matrice(int(masque))
             if matrice is not None:
                 droits.add(DroitGroupe(groupe_id, matrice))
+        return frozenset(droits)
+
+    def _droits_acl_racine(self, folder: dict[str, Any]) -> frozenset[DroitGroupe]:
+        lignes = executer_select(
+            "SELECT a.mapping_type, a.mapping_id, a.mask, a.permissions, c.path "
+            "FROM {p}group_folders_acl a "
+            "JOIN {p}filecache c ON c.fileid = a.fileid "
+            "WHERE c.storage = ?",
+            [folder["storageId"]],
+            alias=self._ssh_alias,
+            occ_dir=self._occ_dir,
+        )
+        droits: set[DroitGroupe] = set()
+        for ligne in lignes:
+            if ligne.get("path") not in _CHEMINS_RACINE:
+                continue  # tranche C1 : règle racine uniquement
+            matrice = regle_acl_vers_matrice(int(ligne["mask"]), int(ligne["permissions"]))
+            if matrice is not None:
+                droits.add(DroitGroupe(str(ligne["mapping_id"]), matrice))
         return frozenset(droits)

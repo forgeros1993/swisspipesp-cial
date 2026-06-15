@@ -96,3 +96,24 @@ def permissions_nextcloud_vers_matrice(masque: int) -> Matrice | None:
         additionnels.add(DroitAdditionnel.CREATION)
 
     return Matrice(niveau, frozenset(additionnels))
+
+
+def regle_acl_vers_matrice(mask: int, permissions: int) -> Matrice | None:
+    """Règle ACL Group Folders (`mask` + `permissions`) -> Matrice abstraite.
+
+    Modèle ACL (table group_folders_acl) : `mask` = bits GOUVERNÉS par la règle
+    (override) ; `permissions` = valeurs pour ces bits. Un bit gouverné ET autorisé =
+    `+verb` ; gouverné ET clear = `-verb` (deny) ; hors mask = hérité.
+
+    On ne lit que les bits GOUVERNÉS-ET-AUTORISÉS (`mask & permissions`) et on réutilise
+    le décodage du sens inverse. Conséquences :
+    - `read` gouverné et refusé (deny) -> aucun bit read autorisé -> None = REFUSER
+      (le groupe est omis du frozenset, cohérent avec un masque sans read).
+    - CLASSEMENT/TÉLÉCHARGEMENT non reconstructibles (cf. permissions_nextcloud_vers_matrice).
+
+    Limite assumée : les bits HÉRITÉS (∉ mask) ne sont pas interprétés. Nos propres
+    écritures (appliquer_droits, C2) gouverneront TOUS les verbes, donc le round-trip
+    racine reste symétrique ; une règle tierce partielle serait lue sur ses seuls bits
+    gouvernés.
+    """
+    return permissions_nextcloud_vers_matrice(mask & permissions)
