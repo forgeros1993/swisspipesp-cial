@@ -166,3 +166,39 @@ l'héritage sur un sous-chemin (`DroitGroupe` ne porte qu'une matrice positive).
 enrichir avec **Ressource = sous-chemin** et l'**héritage par arbre** en L2.
 
 **Prochain** : L2 — transverses & montages (cf. §6).
+
+## 9. Décision d'archi — résistance aux mises à jour Nextcloud
+
+> Décision actée (à ne pas reperdre). Stratégie de l'adaptateur face aux upgrades NC.
+
+- **Constat (vérifié)** : la CLI `occ groupfolders:*`
+  (create/delete/group/rename/permissions/list/scan) et l'encodage ACL
+  (`mask`/`permissions`, 5 verbes read/write/create/delete/share) sont **stables depuis
+  NC 25**, inchangés sur les MAJ majeures. S'appuyer dessus est solide.
+- **Le vrai risque n'est PAS un changement d'API** mais la **désactivation temporaire de
+  l'app Group Folders** pendant un upgrade majeur (bug NC connu, ex. issue
+  `groupfolders#3246`) : pendant la désactivation, les Group Folders **se démontent** →
+  fichiers inaccessibles, et des clients en sync peuvent **supprimer des copies
+  locales**. Observé sur **NC 33** : GF désactivée → 404 API + 17 folders inertes.
+- **L'indépendance TOTALE n'est pas réaliste** : survivre à la disparition de GF en
+  gardant le « drive » imposerait de réimplémenter le moteur de montage/stockage de
+  Nextcloud (un storage backend complet). Le prototype `custom_tags` ne l'a pas fait non
+  plus — il dépend de GF au runtime pour le montage. Le « drive » (vue fichiers montée,
+  mode cockpit) **reste assuré par Group Folders**.
+- **Stratégie retenue** :
+  1. l'adaptateur s'appuie sur **`occ` + SQL lecture** (surfaces stables) ;
+  2. le **cœur SwissPipe (Postgres, agnostique) est la source de vérité** des droits ;
+  3. on ajoutera une **routine de réconciliation** qui détecte si l'état réel Nextcloud
+     diverge de l'état désiré du cœur (cas : GF réactivée après upgrade, droits perdus)
+     et **réapplique depuis le cœur**.
+  Le **round-trip déjà construit** en L1 (`appliquer_droits → lire_droits_effectifs =
+  identité`) en est la **fondation** : c'est l'outil de détection-de-dérive + réparation.
+
+### Contexte produit — site vs cockpit
+`swisspipesp-cial` est la couche de **gouvernance** qui remplace `custom_tags`. Deux
+usages :
+- **Site** : utilisateur final, interface de gouvernance, Group Folders **invisible**.
+- **Cockpit** : accès fichiers façon **drive** via Group Folders (tout le monde y accède).
+
+La visibilité **site/cockpit** est une préoccupation d'**adaptateur/présentation**, **hors
+du cœur** : le cœur décide les droits, il ne gère pas l'affichage.
