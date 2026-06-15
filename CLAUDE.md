@@ -17,8 +17,12 @@ ERP, ni mail, ni bâtiment). Il décide « qui peut quoi sur quelle ressource »
     adaptateur Nextcloud réel (Group Folders via occ SSH + SQL lecture). Les deux
     satisfont le même port `AdaptateurRessource` (preuve d'agnosticité).
 - `swisspipe/persistence/` — modèles SQLAlchemy + migrations Alembic. **Hors du cœur.**
+- `swisspipe/application/` — **orchestration** : câble cœur + ports + persistance + adapters
+  (ex. la réconciliation). Premier câblage cœur→adaptateur du projet.
 
-Règle de dépendance : `adapters → core`, `persistence → core`. Jamais `core → *`.
+Règle de dépendance : `adapters → core`, `persistence → core`,
+`application → core/ports/persistence/adapters`. Jamais `core → *` (le cœur ne connaît ni
+`application`, ni les adaptateurs).
 
 ## 2. Stack imposée
 
@@ -193,6 +197,24 @@ enrichir avec **Ressource = sous-chemin** et l'**héritage par arbre** en L2.
      et **réapplique depuis le cœur**.
   Le **round-trip déjà construit** en L1 (`appliquer_droits → lire_droits_effectifs =
   identité`) en est la **fondation** : c'est l'outil de détection-de-dérive + réparation.
+
+### Avancement réconciliation
+- **`core/services/reconciliation.py`** (PUR) : `etat_desire(...)` (assemble l'état désiré
+  PAR GROUPE via `droit_effectif_groupe`, pas `droit_effectif_compte`) + `comparer_droits`
+  → `Divergence` (groupes_manquants / en_trop / matrices_divergentes + `est_conforme`).
+- **`application/reconciliation_service.py`** : `reconcilier_ressource(session, adaptateur,
+  ressource_id, *, declencheur)` : octrois Postgres → `etat_desire` → `lire_droits_effectifs`
+  → `comparer_droits` → si dérive : `appliquer_droits` + **trace journal par groupe** (INV-6) ;
+  **no-op strict** si conforme. **Niveau folder** (ressource racine, pas d'héritage ; le
+  sous-chemin = L2).
+- **Journal de réconciliation** : `cause = {"type":"reconciliation", "divergence":
+  "manquant|en_trop|matrice", "declencheur":"manuel|auto"[, "groupe_nc":"<nom>"]}`,
+  `acteur = "system:reconciliation"`. Un **groupe externe inconnu du cœur** (côté Nextcloud
+  seulement) est tracé via un **uuid5 déterministe** du nom NC + `cause.groupe_nc` →
+  **aucune action sans trace** (groupe_id NOT NULL mais sans FK).
+- **Reste pour boucler la protection** : la **réconciliation EN MASSE** (balayer toutes les
+  ressources, ex. au démarrage après upgrade détecté) + un **test grandeur nature** sur le
+  vrai serveur (dérive simulée sur folder jetable).
 
 ### Contexte produit — site vs cockpit
 `swisspipesp-cial` est la couche de **gouvernance** qui remplace `custom_tags`. Deux
