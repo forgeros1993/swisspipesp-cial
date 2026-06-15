@@ -207,14 +207,20 @@ enrichir avec **Ressource = sous-chemin** et l'**héritage par arbre** en L2.
   → `comparer_droits` → si dérive : `appliquer_droits` + **trace journal par groupe** (INV-6) ;
   **no-op strict** si conforme. **Niveau folder** (ressource racine, pas d'héritage ; le
   sous-chemin = L2).
+- **`reconcilier_tout(session, adaptateur, *, declencheur="auto")`** : balaie TOUTES les
+  ressources mappées Nextcloud, **résilient** (commit par ressource ; une ressource en erreur
+  n'arrête PAS le balayage ; `except Exception` générique → découplé de l'adaptateur concret).
+  Retourne un **`RapportReconciliation`** (compteurs conformes/réparées/erreurs +
+  `ressources_en_erreur`). Ordre déterministe par `ressource_id`.
 - **Journal de réconciliation** : `cause = {"type":"reconciliation", "divergence":
   "manquant|en_trop|matrice", "declencheur":"manuel|auto"[, "groupe_nc":"<nom>"]}`,
   `acteur = "system:reconciliation"`. Un **groupe externe inconnu du cœur** (côté Nextcloud
   seulement) est tracé via un **uuid5 déterministe** du nom NC + `cause.groupe_nc` →
   **aucune action sans trace** (groupe_id NOT NULL mais sans FK).
-- **Reste pour boucler la protection** : la **réconciliation EN MASSE** (balayer toutes les
-  ressources, ex. au démarrage après upgrade détecté) + un **test grandeur nature** sur le
-  vrai serveur (dérive simulée sur folder jetable).
+- **Reste pour boucler la protection** (la capacité de réconciliation unitaire + masse est
+  COMPLÈTE) : (a) le **déclenchement automatique** — détecter qu'un upgrade / une réactivation
+  de Group Folders a eu lieu pour lancer `reconcilier_tout` tout seul ; (b) un **test grandeur
+  nature** sur le vrai serveur (dérive simulée sur folder jetable via `AdaptateurNextcloud`).
 
 ### Contexte produit — site vs cockpit
 `swisspipesp-cial` est la couche de **gouvernance** qui remplace `custom_tags`. Deux
