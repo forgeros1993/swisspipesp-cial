@@ -13,8 +13,9 @@ ERP, ni mail, ni bâtiment). Il décide « qui peut quoi sur quelle ressource »
   exprime ses besoins via des **ports** (Protocols).
 - `swisspipe/adapters/` — traduit les décisions du cœur vers des exécutants concrets.
   - `inbound/` — entrées (FastAPI / HTTP).
-  - `outbound/` — sorties. `fake/` = adaptateur ressource en mémoire (tests).
-    `nextcloud/` viendra plus tard.
+  - `outbound/` — sorties. `fake/` = adaptateur en mémoire (tests) ; `nextcloud/` =
+    adaptateur Nextcloud réel (Group Folders via occ SSH + SQL lecture). Les deux
+    satisfont le même port `AdaptateurRessource` (preuve d'agnosticité).
 - `swisspipe/persistence/` — modèles SQLAlchemy + migrations Alembic. **Hors du cœur.**
 
 Règle de dépendance : `adapters → core`, `persistence → core`. Jamais `core → *`.
@@ -124,9 +125,44 @@ Chaque lot livre quelque chose de démontrable.
   `export DATABASE_URL_TEST=postgresql+psycopg://swisspipe:swisspipe@localhost:5432/swisspipe_test`
   puis `.venv/bin/python -m pytest`. Le schéma de test est (re)construit par la
   migration Alembic (pas `create_all`) pour inclure le trigger du journal.
+- **Accès serveur Nextcloud** : via SSH **alias `vellis-nx`** (`~/.ssh/config`, clé
+  `vellis_infomaniak`). Canal de l'adaptateur = `occ` en SSH (`occ_runner.py`) + SQL
+  lecture seule pour l'ACL fine (`sql_runner.py`, SELECT-only). NC **33.0.4**, Group
+  Folders **21.0.8** installé **manuellement** (tarball signé déposé dans
+  `custom_apps/` — l'app store Infomaniak est inexploitable : timeout réseau sortant).
+  Les tests d'intégration adaptateur **skippent** sans accès SSH ; ils n'opèrent que
+  sur des folders jetables `zztest_` (id > 20), **jamais les 17 Group Folders de prod**
+  (ids 4-20), avec cleanup garanti (folder + règles ACL orphelines).
 
-## 8. État courant
+## 8. État courant — **L1 BOUCLÉ**
 
-Fondation consolidée : structure, config, ADR proposés, Alembic config, garde-fou
-cœur pur (ruff + test). Pas encore de domaine, de service, ni d'endpoint fonctionnel.
-Prochain : schéma de données (lot L1/L3).
+Le cœur agnostique **et** l'adaptateur Nextcloud réel sont complets et testés
+(**176 tests verts**). Référence du prototype remplacé :
+[`docs/analyse-prototype-custom-tags.md`](docs/analyse-prototype-custom-tags.md).
+
+**Cœur** : domaine (Matrice/Mode/Octroi, topologie, Groupe, Ressource), services
+(renversement, droits effectifs : héritage + modes + combinaison multi-groupes
+additive), ports + adaptateur fake, persistance (SQLAlchemy + migration Alembic,
+journal append-only avec trigger Postgres anti UPDATE/DELETE).
+
+**Adaptateur Nextcloud** — les 5 méthodes du port `AdaptateurRessource` :
+- `lire_droits_effectifs` : niveau folder (ACL off) + ACL fine par chemin via SQL
+  (ACL on), chemin racine.
+- `creer_ressource` / `renommer_ressource` : via `occ groupfolders:create`/`rename`.
+- `archiver_ressource` : **réversible (INV-5)** — retire les groupes, jamais de delete dur.
+- `appliquer_droits` : ACL fine, **idempotent** (clear+pose), **réconciliation** (groupe
+  absent du désiré → clear), **INV-4** (groupes uniquement, `-g`).
+
+**Acquis prouvés** :
+- **Agnosticité** : `AdaptateurNextcloud` et `AdaptateurMemoire` satisfont le même
+  Protocol ; `test_core_purity` vert (le cœur n'importe aucun Nextcloud).
+- **Réconciliation (INV-6)** : round-trip `appliquer_droits → lire_droits_effectifs` =
+  identité, testé grandeur nature sur le serveur réel (folders jetables, prod intacte).
+- Canal : `occ` en SSH (pas d'API HTTP externe) + SQL lecture seule pour l'ACL.
+
+**Limite connue → L2** : `appliquer_droits` gère le REFUSER par **ABSENCE** (la
+réconciliation retire le groupe), mais **pas le REFUSER EXPLICITE** overridant
+l'héritage sur un sous-chemin (`DroitGroupe` ne porte qu'une matrice positive). À
+enrichir avec **Ressource = sous-chemin** et l'**héritage par arbre** en L2.
+
+**Prochain** : L2 — transverses & montages (cf. §6).
