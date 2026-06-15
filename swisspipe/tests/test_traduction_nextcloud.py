@@ -3,10 +3,9 @@
 from __future__ import annotations
 
 import inspect
+import subprocess
 
 import pytest
-
-import subprocess
 
 from swisspipe.adapters.outbound.nextcloud.adaptateur_nextcloud import AdaptateurNextcloud
 from swisspipe.adapters.outbound.nextcloud.occ_runner import NEXTCLOUD_SSH_ALIAS
@@ -48,16 +47,24 @@ def test_suppression_vaut_read_update_delete() -> None:
 
 
 def test_lecture_creation() -> None:
-    assert matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.LECTURE, DroitAdditionnel.CREATION)) == 5
+    assert (
+        matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.LECTURE, DroitAdditionnel.CREATION))
+        == 5
+    )
 
 
 def test_ecriture_creation() -> None:
-    assert matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.ECRITURE, DroitAdditionnel.CREATION)) == 7
+    assert (
+        matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.ECRITURE, DroitAdditionnel.CREATION))
+        == 7
+    )
 
 
 def test_suppression_creation() -> None:
     assert (
-        matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.SUPPRESSION, DroitAdditionnel.CREATION))
+        matrice_vers_permissions_nextcloud(
+            _m(NiveauPrincipal.SUPPRESSION, DroitAdditionnel.CREATION)
+        )
         == 15
     )
 
@@ -69,13 +76,18 @@ def test_suppression_creation() -> None:
 
 def test_classement_ajoute_create_et_delete() -> None:
     # Lecture(1) + create(4) + delete(8) = 13.
-    assert matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.LECTURE, DroitAdditionnel.CLASSEMENT)) == 13
+    assert (
+        matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.LECTURE, DroitAdditionnel.CLASSEMENT))
+        == 13
+    )
 
 
 def test_classement_sur_ecriture() -> None:
     # Écriture(3) | create(4) | delete(8) = 15.
     assert (
-        matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.ECRITURE, DroitAdditionnel.CLASSEMENT))
+        matrice_vers_permissions_nextcloud(
+            _m(NiveauPrincipal.ECRITURE, DroitAdditionnel.CLASSEMENT)
+        )
         == 15
     )
 
@@ -86,9 +98,16 @@ def test_classement_sur_ecriture() -> None:
 
 
 def test_telechargement_n_ajoute_aucun_bit() -> None:
-    assert matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.LECTURE, DroitAdditionnel.TELECHARGEMENT)) == 1
     assert (
-        matrice_vers_permissions_nextcloud(_m(NiveauPrincipal.ECRITURE, DroitAdditionnel.TELECHARGEMENT))
+        matrice_vers_permissions_nextcloud(
+            _m(NiveauPrincipal.LECTURE, DroitAdditionnel.TELECHARGEMENT)
+        )
+        == 1
+    )
+    assert (
+        matrice_vers_permissions_nextcloud(
+            _m(NiveauPrincipal.ECRITURE, DroitAdditionnel.TELECHARGEMENT)
+        )
         == 3
     )
 
@@ -157,16 +176,10 @@ def test_traduire_droits_est_reel() -> None:
     assert a.traduire_droits(droits) == {"g1": 3, "g2": 5}
 
 
-def test_methodes_ecriture_levent_notimplemented() -> None:
-    # Tranche B/C : les 4 écritures restent non implémentées (lire_droits_effectifs, lui,
-    # est implémenté — testé par le test réseau skippable).
+def test_appliquer_droits_reste_notimplemented() -> None:
+    # Tranche C : appliquer_droits non implémenté (creer/renommer/archiver = Tranche B,
+    # lire = Tranche A ; testés par les tests d'intégration skippables).
     a = AdaptateurNextcloud(*CONFIG)
-    with pytest.raises(NotImplementedError):
-        a.creer_ressource(None)  # type: ignore[arg-type]
-    with pytest.raises(NotImplementedError):
-        a.archiver_ressource("cle")
-    with pytest.raises(NotImplementedError):
-        a.renommer_ressource("cle", "nom")
     with pytest.raises(NotImplementedError):
         a.appliquer_droits("cle", [DroitGroupe("g1", _m(NiveauPrincipal.LECTURE))])
 
