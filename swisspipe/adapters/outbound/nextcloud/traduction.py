@@ -65,3 +65,34 @@ def matrice_vers_permissions_nextcloud(matrice: Matrice) -> int:
     for additionnel in matrice.additionnels:
         bits |= _ADDITIONNEL_VERS_BITS.get(additionnel, 0)
     return bits
+
+
+def permissions_nextcloud_vers_matrice(masque: int) -> Matrice | None:
+    """Sens INVERSE : masque de bits Nextcloud -> Matrice abstraite.
+
+    Décision d'adaptateur (§3.2), validée. Sert à la RÉCONCILIATION (relire l'état réel
+    côté exécutant), PAS de source de vérité — la source reste le cœur. La traduction
+    aller n'étant pas bijective, ce retour est volontairement PARTIEL :
+
+    - niveau : bit delete(8) -> SUPPRESSION ; sinon update(2) -> ÉCRITURE ;
+      sinon read(1) -> LECTURE ; sinon (pas de read) -> None (aucun droit).
+    - bit create(4) -> additionnel CRÉATION (récupérable).
+    - bit share(16) -> IGNORÉ (hors matrice ; le partage n'est jamais octroyé).
+    - CLASSEMENT et TÉLÉCHARGEMENT -> NON reconstructibles depuis les bits (perte
+      assumée, cohérente avec Q-téléchargement et D7). On compare donc le comparable.
+    """
+    if not (masque & PERM_READ):
+        return None
+
+    if masque & PERM_DELETE:
+        niveau = NiveauPrincipal.SUPPRESSION
+    elif masque & PERM_UPDATE:
+        niveau = NiveauPrincipal.ECRITURE
+    else:
+        niveau = NiveauPrincipal.LECTURE
+
+    additionnels: set[DroitAdditionnel] = set()
+    if masque & PERM_CREATE:
+        additionnels.add(DroitAdditionnel.CREATION)
+
+    return Matrice(niveau, frozenset(additionnels))
