@@ -47,23 +47,36 @@ Folders » avant de reconnaître qu'il allait trop loin. **Rappel** : le cœur r
 n'est **qu'un adaptateur**. C'est la discipline du garde-fou de pureté, **déjà en place**
 (`test_core_purity.py` + ruff TID251). Pas d'action de code.
 
+### D5 — Mode REFUSER CONFIRMÉ (pas une coquille)
+Cédric s'interrogeait sur l'origine du REFUSER. **Confirmé** : présent dans sa spec
+(§9.2 « Refuser : liste noire explicite, prioritaire sur l'héritage »), le glossaire et
+le modèle §4.6. Rôle : **exception d'héritage** — cacher un sous-dossier précis malgré
+l'héritage du parent. **On le garde** (implémenté dans `droit_effectif_groupe`).
+
+### D6 — Combinaison multi-groupes : modèle ADDITIF (tranché)
+Le droit positif **le plus permissif gagne** à travers l'ensemble des groupes d'une
+personne. Un **REFUSER ne bloque l'accès QUE via le groupe sur lequel il porte** ; si la
+personne a un autre groupe qui donne l'accès, elle l'obtient. Le REFUSER agit **à
+l'intérieur d'un groupe** (coupe l'héritage pour ce groupe) ; **entre les groupes**, on
+prend le **maximum des droits positifs** — un REFUSER n'écrase jamais le positif d'un
+autre groupe.
+
+- **Exemple Cédric** : dossier « Salaires direction » REFUSER pour le groupe Finance,
+  mais hérité/positif pour Direction. Marie (Finance ET Direction) **voit** le dossier
+  via Direction.
+- **Implémenté** : `droit_effectif_compte` (union des droits : niveau max + additionnels
+  unis). Voir `core/services/droits_effectifs.py` et `Matrice.fusionner`.
+
+### D7 — Le classement ne DÉTRUIT pas (tranché)
+Cédric : « reclasser et détruire ne doivent **pas** être les mêmes droits ». Le mapping
+actuel `CLASSEMENT = create|delete` **sur-octroie** un pouvoir de suppression → à
+corriger. Décision : le classement **ne doit pas embarquer la capacité de détruire**.
+**Action différée** à la tranche `files_accesscontrol` (le `delete` devra être restreint
+côté Nextcloud). Tranché ; pas d'action de code dans le cœur.
+
 ## En attente
 
-### Q2 — Combinaison multi-groupes
-Règle de combinaison quand un compte a plusieurs groupes (le plus permissif gagne ? un
-REFUSER d'un groupe prime-t-il sur un octroi positif d'un autre ?) **non tranchée**.
-`droit_effectif_compte` reste en `NotImplementedError` (voir docstring de
-`core/services/droits_effectifs.py`).
-
-### Q3 — Mapping permissions Nextcloud : TÉLÉCHARGEMENT et CLASSEMENT
-Décision **d'adaptateur** (pas du domaine), dans
-`adapters/outbound/nextcloud/traduction.py`. Mapping niveaux figé
-(Lecture=1, Écriture=3, Suppression=11, +Création=+4). Deux additionnels restent
-ouverts :
-
-- **TÉLÉCHARGEMENT** : pas de bit "download" distinct dans Group Folders (download
-  suit `read`). → **non mappé** (0 bit), à traiter via `files_accesscontrol` dans une
-  tranche réseau ultérieure. Pas de faux bit inventé.
-- **CLASSEMENT** : interprété comme `create|delete` (move WebDAV = create@dest +
-  delete@source). **À CONFIRMER** : sur-octroie un `delete` brut au-delà de l'intention
-  « ranger » ; peut-être à restreindre via `files_accesscontrol`.
+### Q-téléchargement — Mapping Nextcloud du droit TÉLÉCHARGEMENT
+Toujours ouvert. Pas de bit "download" distinct dans Group Folders (le download suit
+`read`). → **non mappé** (0 bit) pour l'instant, à traiter via `files_accesscontrol` à
+la tranche réseau. Pas de faux bit inventé. (Décision d'adaptateur, hors cœur.)
