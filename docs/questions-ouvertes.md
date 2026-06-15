@@ -54,3 +54,16 @@ Règle de combinaison quand un compte a plusieurs groupes (le plus permissif gag
 REFUSER d'un groupe prime-t-il sur un octroi positif d'un autre ?) **non tranchée**.
 `droit_effectif_compte` reste en `NotImplementedError` (voir docstring de
 `core/services/droits_effectifs.py`).
+
+### Q3 — Mapping permissions Nextcloud : TÉLÉCHARGEMENT et CLASSEMENT
+Décision **d'adaptateur** (pas du domaine), dans
+`adapters/outbound/nextcloud/traduction.py`. Mapping niveaux figé
+(Lecture=1, Écriture=3, Suppression=11, +Création=+4). Deux additionnels restent
+ouverts :
+
+- **TÉLÉCHARGEMENT** : pas de bit "download" distinct dans Group Folders (download
+  suit `read`). → **non mappé** (0 bit), à traiter via `files_accesscontrol` dans une
+  tranche réseau ultérieure. Pas de faux bit inventé.
+- **CLASSEMENT** : interprété comme `create|delete` (move WebDAV = create@dest +
+  delete@source). **À CONFIRMER** : sur-octroie un `delete` brut au-delà de l'intention
+  « ranger » ; peut-être à restreindre via `files_accesscontrol`.

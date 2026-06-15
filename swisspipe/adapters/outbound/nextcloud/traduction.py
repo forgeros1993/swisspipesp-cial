@@ -1,0 +1,67 @@
+"""Traduction matrice abstraite -> masque de permissions Nextcloud (Group Folders).
+
+DÉCISION D'ADAPTATEUR (§3.2), pas du domaine : ce mapping n'a AUCUNE autorité sur le
+cœur. Le cœur reste agnostique ; c'est ici, dans l'adaptateur, qu'on choisit comment
+projeter une Matrice sur les bits Nextcloud. Aucun appel réseau (100% testable).
+
+Bits de permission Nextcloud (app Group Folders) :
+    read=1, update=2, create=4, delete=8, share=16  (31 = somme des cinq)
+
+Mapping retenu :
+- NiveauPrincipal.LECTURE      -> read                     = 1
+- NiveauPrincipal.ECRITURE     -> read|update              = 3   (modifier l'existant)
+- NiveauPrincipal.SUPPRESSION  -> read|update|delete       = 11
+- DroitAdditionnel.CREATION    -> + create (4)
+- DroitAdditionnel.CLASSEMENT  -> + create|delete (déplacer = create@dest + delete@source)
+- DroitAdditionnel.TELECHARGEMENT -> AUCUN bit (voir question ouverte ci-dessous)
+
+`share` (16) n'est jamais octroyé par cette traduction (le partage n'est pas un droit
+de notre matrice).
+
+QUESTIONS OUVERTES (à ne PAS figer sans validation) :
+- TÉLÉCHARGEMENT : Nextcloud Group Folders n'a pas de bit "download" distinct. Le
+  download suit `read` ; interdire le download relève de `files_accesscontrol` /
+  paramètres de partage, pas des permission-bits. -> NON mappable ici, contribue 0 bit.
+  À traiter via files_accesscontrol dans une tranche ultérieure. (On n'invente pas de
+  faux bit.)
+- CLASSEMENT : "classer/ranger" = déplacer. Un move WebDAV = create (destination) +
+  delete (source), d'où create|delete. MAIS cela SUR-OCTROIE un `delete` brut (capacité
+  de suppression de fichiers) au-delà de l'intention "ranger". Interprétation de travail,
+  **À CONFIRMER** — peut-être à restreindre via files_accesscontrol plus tard.
+"""
+
+from __future__ import annotations
+
+from swisspipe.core.domain.matrice import DroitAdditionnel, Matrice, NiveauPrincipal
+
+# Bits Nextcloud (Group Folders).
+PERM_READ = 1
+PERM_UPDATE = 2
+PERM_CREATE = 4
+PERM_DELETE = 8
+PERM_SHARE = 16
+PERM_ALL = 31
+
+_NIVEAU_VERS_BITS: dict[NiveauPrincipal, int] = {
+    NiveauPrincipal.LECTURE: PERM_READ,
+    NiveauPrincipal.ECRITURE: PERM_READ | PERM_UPDATE,
+    NiveauPrincipal.SUPPRESSION: PERM_READ | PERM_UPDATE | PERM_DELETE,
+}
+
+_ADDITIONNEL_VERS_BITS: dict[DroitAdditionnel, int] = {
+    DroitAdditionnel.CREATION: PERM_CREATE,
+    # Déplacer = create@dest + delete@source (sur-octroi de delete : À CONFIRMER).
+    DroitAdditionnel.CLASSEMENT: PERM_CREATE | PERM_DELETE,
+    # TELECHARGEMENT : volontairement absent (non mappable en bits, cf. docstring).
+}
+
+
+def matrice_vers_permissions_nextcloud(matrice: Matrice) -> int:
+    """Projette une Matrice du domaine sur le masque de bits Nextcloud.
+
+    Déterministe et pur. `TELECHARGEMENT` n'ajoute aucun bit (question ouverte).
+    """
+    bits = _NIVEAU_VERS_BITS[matrice.niveau]
+    for additionnel in matrice.additionnels:
+        bits |= _ADDITIONNEL_VERS_BITS.get(additionnel, 0)
+    return bits
