@@ -86,7 +86,24 @@ PostgreSQL · pytest. Qualité : ruff (lint+format) · mypy (strict).
 - **L5 — Adaptateur Nextcloud** : `outbound/nextcloud/`, traduction des décisions vers
   groupfolders / partages. Aucune logique de décision dedans.
 
-## 7. État courant
+## 7. Notes d'environnement
 
-Session scaffolding : fondation seule (structure, config, ADR proposés, Alembic
-config). Pas encore de domaine, de service, ni d'endpoint fonctionnel.
+> Pièges connus — éviter de re-diagnostiquer à chaque session.
+
+- **Git push** : le push **HTTPS échoue** (pas de credentials configurés :
+  `could not read Username for 'https://github.com'`). Le remote `origin` est en
+  **SSH** : `git@github.com:forgeros1993/swisspipesp-cial.git`. Auth SSH OK comme
+  **forgeros1993**. → pousser en SSH, ne pas repasser en HTTPS.
+- **Garde-fou cœur pur** : deux niveaux. (1) ruff TID251 via configs imbriquées
+  `swisspipe/core/ruff.toml` (+ `core/domain/ruff.toml` qui bannit aussi pydantic) ;
+  (2) test ceinture `swisspipe/tests/test_core_purity.py` (AST, stdlib, tourne même
+  ruff désactivé). pydantic : interdit `core/domain`, autorisé `core/services`.
+- **Tooling local** : ruff absent du système (PEP 668 bloque pip global) → installé
+  dans `.venv` (git-ignoré). pytest système 7.4.4 dispo (plugin asyncio absent →
+  warning `Unknown config option: asyncio_mode`, sans gravité). `gh` absent.
+
+## 8. État courant
+
+Fondation consolidée : structure, config, ADR proposés, Alembic config, garde-fou
+cœur pur (ruff + test). Pas encore de domaine, de service, ni d'endpoint fonctionnel.
+Prochain : schéma de données (lot L1/L3).

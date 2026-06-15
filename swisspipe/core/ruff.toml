@@ -1,0 +1,22 @@
+# Garde-fou "cœur pur" — niveau ruff (bretelles).
+# Le cœur (swisspipe/core/**) ne doit JAMAIS importer de lib d'infrastructure
+# ni les couches adapters/persistence. Voir aussi le test ceinture
+# swisspipe/tests/test_core_purity.py et CLAUDE.md §1.
+#
+# Hérite de la config racine (line-length, select, mypy non concerné ici).
+extend = "../../pyproject.toml"
+
+[lint]
+extend-select = ["TID251"]  # flake8-tidy-imports : banned-api
+
+# TID251 fait du préfixe : bannir "sqlalchemy" couvre `import sqlalchemy`,
+# `import sqlalchemy.orm`, `from sqlalchemy import X`, `from sqlalchemy.orm import X`.
+[lint.flake8-tidy-imports.banned-api]
+"sqlalchemy".msg = "cœur agnostique : pas d'ORM dans core/ (INV). Passe par un port + adaptateur persistence."
+"fastapi".msg = "cœur agnostique : pas de framework web dans core/. Les entrées HTTP vivent dans adapters/inbound."
+"starlette".msg = "cœur agnostique : pas de framework web dans core/."
+"uvicorn".msg = "cœur agnostique : pas de serveur ASGI dans core/."
+"alembic".msg = "cœur agnostique : migrations en persistence/, pas dans core/."
+"psycopg".msg = "cœur agnostique : pas de driver DB dans core/. Passe par un port."
+"swisspipe.adapters".msg = "règle de dépendance hexagonale : core ne dépend jamais de adapters."
+"swisspipe.persistence".msg = "règle de dépendance hexagonale : core ne dépend jamais de persistence."

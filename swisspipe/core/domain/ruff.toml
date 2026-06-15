@@ -1,0 +1,21 @@
+# Garde-fou "domaine 100% stdlib" — niveau ruff (bretelles).
+# core/domain/** : value objects et entités en stdlib pur (frozen dataclasses).
+# pydantic est INTERDIT ici (autorisé dans core/services). Voir CLAUDE.md §1/§5.
+#
+# Re-déclare TOUS les bans infra du parent + pydantic (l'extend ne fusionne pas
+# de façon garantie la table banned-api ; on ré-énumère pour être explicite).
+extend = "../../../pyproject.toml"
+
+[lint]
+extend-select = ["TID251"]
+
+[lint.flake8-tidy-imports.banned-api]
+"sqlalchemy".msg = "cœur agnostique : pas d'ORM dans core/."
+"fastapi".msg = "cœur agnostique : pas de framework web dans core/."
+"starlette".msg = "cœur agnostique : pas de framework web dans core/."
+"uvicorn".msg = "cœur agnostique : pas de serveur ASGI dans core/."
+"alembic".msg = "cœur agnostique : pas de migrations dans core/."
+"psycopg".msg = "cœur agnostique : pas de driver DB dans core/."
+"pydantic".msg = "domaine 100% stdlib : utilise dataclass(frozen=True). pydantic est autorisé dans core/services, pas dans core/domain."
+"swisspipe.adapters".msg = "règle hexagonale : core ne dépend jamais de adapters."
+"swisspipe.persistence".msg = "règle hexagonale : core ne dépend jamais de persistence."
