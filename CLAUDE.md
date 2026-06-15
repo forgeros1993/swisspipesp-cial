@@ -116,8 +116,14 @@ Chaque lot livre quelque chose de démontrable.
   (2) test ceinture `swisspipe/tests/test_core_purity.py` (AST, stdlib, tourne même
   ruff désactivé). pydantic : interdit `core/domain`, autorisé `core/services`.
 - **Tooling local** : ruff absent du système (PEP 668 bloque pip global) → installé
-  dans `.venv` (git-ignoré). pytest système 7.4.4 dispo (plugin asyncio absent →
-  warning `Unknown config option: asyncio_mode`, sans gravité). `gh` absent.
+  dans `.venv` (git-ignoré, avec sqlalchemy/alembic/psycopg/pytest/ruff). `gh` absent.
+  Le warning `Unknown config option: asyncio_mode` est sans gravité.
+- **Postgres de test** : natif (apt), PG 16. Ne redémarre PAS seul entre sessions WSL
+  → `sudo service postgresql start`. Base `swisspipe_test` (owner `swisspipe`). Tests
+  de persistance lus depuis `DATABASE_URL_TEST` (skippés si absente) :
+  `export DATABASE_URL_TEST=postgresql+psycopg://swisspipe:swisspipe@localhost:5432/swisspipe_test`
+  puis `.venv/bin/python -m pytest`. Le schéma de test est (re)construit par la
+  migration Alembic (pas `create_all`) pour inclure le trigger du journal.
 
 ## 8. État courant
 

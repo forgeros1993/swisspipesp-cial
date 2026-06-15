@@ -1,8 +1,7 @@
 """Alembic environment.
 
-DATABASE_URL est lu depuis l'environnement (jamais codé en dur). target_metadata
-restera None tant que les modèles SQLAlchemy n'existent pas (lot L3) ; le brancher
-sur la metadata de la Base déclarative à ce moment-là.
+DATABASE_URL est lu depuis l'environnement (jamais codé en dur). target_metadata est
+branché sur la Base déclarative des modèles (swisspipe.persistence.models).
 """
 
 from __future__ import annotations
@@ -12,6 +11,8 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
+
+from swisspipe.persistence.models import Base
 
 config = context.config
 
@@ -23,8 +24,7 @@ database_url = os.environ.get("DATABASE_URL")
 if database_url:
     config.set_main_option("sqlalchemy.url", database_url)
 
-# L3 : remplacer par `Base.metadata` une fois les modèles déclarés.
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
