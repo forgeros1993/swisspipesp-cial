@@ -97,5 +97,7 @@ def test_core_imports_are_pure() -> None:
             hit = _is_banned(module, banned)
             if hit:
                 rel = py_file.relative_to(REPO_ROOT)
-                violations.append(f"{rel}:{lineno}: import interdit '{module}' (préfixe banni '{hit}')")
+                violations.append(
+                    f"{rel}:{lineno}: import interdit '{module}' (préfixe banni '{hit}')"
+                )
     assert not violations, "Cœur impur — imports interdits trouvés :\n" + "\n".join(violations)

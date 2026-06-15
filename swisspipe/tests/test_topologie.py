@@ -155,7 +155,11 @@ def test_valeur_sur_dimension_absente() -> None:
         (Dimension("secteur", "Secteur"), "cle", "autre"),
         (ValeurDimension("secteur", "alpha", "Alpha"), "cle", "autre"),
         (Coordonnee("secteur", "alpha"), "valeur_cle", "autre"),
-        (EspaceDimensionnel(frozenset({Coordonnee("secteur", "alpha")})), "coordonnees", frozenset()),
+        (
+            EspaceDimensionnel(frozenset({Coordonnee("secteur", "alpha")})),
+            "coordonnees",
+            frozenset(),
+        ),
     ],
 )
 def test_immutabilite(obj: object, champ: str, valeur: object) -> None:

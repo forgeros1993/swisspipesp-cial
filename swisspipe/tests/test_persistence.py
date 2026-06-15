@@ -7,6 +7,7 @@ from sqlalchemy import Connection, Engine, inspect, select, text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.orm import Session
 
+from swisspipe.core.domain.acteurs import TypeGroupe
 from swisspipe.core.domain.matrice import DroitAdditionnel, Matrice, Mode, NiveauPrincipal
 from swisspipe.persistence.models import (
     Dimension,
@@ -20,7 +21,6 @@ from swisspipe.persistence.models import (
     ValeurDimension,
     signature_combinaison,
 )
-from swisspipe.core.domain.acteurs import TypeGroupe
 
 TABLES_ATTENDUES = {
     "dimension",
@@ -172,9 +172,12 @@ def test_journal_append_only(connection: Connection) -> None:
             connection.execute(text("DELETE FROM journal_acces WHERE id = :id"), {"id": jid})
 
     # La ligne d'origine est intacte.
-    assert connection.execute(
-        text("SELECT acteur FROM journal_acces WHERE id = :id"), {"id": jid}
-    ).scalar_one() is None
+    assert (
+        connection.execute(
+            text("SELECT acteur FROM journal_acces WHERE id = :id"), {"id": jid}
+        ).scalar_one()
+        is None
+    )
 
     # Correction = ligne compensatoire (nouvel INSERT), jamais modification (§10.2).
     connection.execute(

@@ -185,7 +185,11 @@ def test_vers_jsonb_additionnels_tries() -> None:
         Matrice(NiveauPrincipal.ECRITURE, {DroitAdditionnel.CLASSEMENT}),
         Matrice(
             NiveauPrincipal.SUPPRESSION,
-            {DroitAdditionnel.CREATION, DroitAdditionnel.CLASSEMENT, DroitAdditionnel.TELECHARGEMENT},
+            {
+                DroitAdditionnel.CREATION,
+                DroitAdditionnel.CLASSEMENT,
+                DroitAdditionnel.TELECHARGEMENT,
+            },
         ),
     ],
 )
