@@ -221,9 +221,17 @@ enrichir avec **Ressource = sous-chemin** et l'**héritage par arbre** en L2.
   sans SSH/Postgres) prouve la boucle complète contre le **vrai NC 33** : dérive ACL réelle
   (matrice altérée + droit effacé, cas #3246) **détectée et réparée** depuis le cœur, trace
   journal, prod (17 folders) intacte. Preuve reproductible.
-- **Reste pour boucler la protection** (réconciliation unitaire + masse + preuve réelle
-  COMPLÈTES) : seul (a) le **déclenchement automatique** — détecter qu'un upgrade / une
-  réactivation de Group Folders a eu lieu pour lancer `reconcilier_tout` tout seul.
+- **Déclenchement automatique : FAIT** ✅ —
+  `verifier_et_reconcilier(session, adaptateur, lecteur_etat)` détecte un changement d'état
+  (via la table **`etat_systeme`** + le lecteur **`adapters/outbound/nextcloud/etat_nextcloud.py`**
+  `lire_etat_nextcloud`, **prouvé contre le vrai serveur** : NC 33.0.4 / GF 21.0.8 enabled) et
+  déclenche `reconcilier_tout`. Règle OU (première exécution / GF réactivé #3246 / version NC
+  ou GF changée) ; **no-op strict si inchangé**. Lecteur **injectable** (testable sans réseau),
+  hors du port (préoccupation distincte des ressources).
+
+> **PROTECTION ANTI-UPGRADE COMPLÈTE.** Reste uniquement, en **déploiement** (hors périmètre
+> actuel) : brancher `verifier_et_reconcilier` à un point d'entrée (cron / CLI / hook startup)
+> quand l'entrée applicative existera.
 
 ### Contexte produit — site vs cockpit
 `swisspipesp-cial` est la couche de **gouvernance** qui remplace `custom_tags`. Deux
