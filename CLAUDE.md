@@ -217,10 +217,13 @@ enrichir avec **Ressource = sous-chemin** et l'**héritage par arbre** en L2.
   `acteur = "system:reconciliation"`. Un **groupe externe inconnu du cœur** (côté Nextcloud
   seulement) est tracé via un **uuid5 déterministe** du nom NC + `cause.groupe_nc` →
   **aucune action sans trace** (groupe_id NOT NULL mais sans FK).
-- **Reste pour boucler la protection** (la capacité de réconciliation unitaire + masse est
-  COMPLÈTE) : (a) le **déclenchement automatique** — détecter qu'un upgrade / une réactivation
-  de Group Folders a eu lieu pour lancer `reconcilier_tout` tout seul ; (b) un **test grandeur
-  nature** sur le vrai serveur (dérive simulée sur folder jetable via `AdaptateurNextcloud`).
+- **Test grandeur nature : FAIT** ✅ — `tests/test_reconciliation_grandeur_nature.py` (skip
+  sans SSH/Postgres) prouve la boucle complète contre le **vrai NC 33** : dérive ACL réelle
+  (matrice altérée + droit effacé, cas #3246) **détectée et réparée** depuis le cœur, trace
+  journal, prod (17 folders) intacte. Preuve reproductible.
+- **Reste pour boucler la protection** (réconciliation unitaire + masse + preuve réelle
+  COMPLÈTES) : seul (a) le **déclenchement automatique** — détecter qu'un upgrade / une
+  réactivation de Group Folders a eu lieu pour lancer `reconcilier_tout` tout seul.
 
 ### Contexte produit — site vs cockpit
 `swisspipesp-cial` est la couche de **gouvernance** qui remplace `custom_tags`. Deux
