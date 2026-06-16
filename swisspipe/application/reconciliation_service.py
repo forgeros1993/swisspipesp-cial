@@ -21,16 +21,24 @@ Décisions actées :
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from swisspipe.adapters.outbound.nextcloud.etat_nextcloud import EtatNextcloud
 from swisspipe.core.domain.matrice import Matrice
 from swisspipe.core.domain.octroi import Octroi
 from swisspipe.core.ports.adaptateur_ressource import AdaptateurRessource
 from swisspipe.core.services.reconciliation import Divergence, comparer_droits, etat_desire
-from swisspipe.persistence.models import ActionJournal, Groupe, JournalAcces, RessourceMapping
+from swisspipe.persistence.models import (
+    ActionJournal,
+    EtatSysteme,
+    Groupe,
+    JournalAcces,
+    RessourceMapping,
+)
 from swisspipe.persistence.models import Octroi as OctroiModel
 
 ADAPTATEUR = "nextcloud"
@@ -254,3 +262,55 @@ def reconcilier_tout(
             session.rollback()
             resultats.append(ResultatRessource(rid, "erreur", erreur=f"{type(e).__name__}: {e}"))
     return RapportReconciliation(tuple(resultats))
+
+
+def _doit_reconcilier(
+    etat_actuel: EtatNextcloud, marqueur: dict[str, object] | None
+) -> tuple[bool, str]:
+    """Décide s'il faut réconcilier + la raison (traçabilité). Pur. Règle = OU logique.
+
+    Déclencher « pour rien » est sûr (no-op strict si rien n'a cassé) -> on est généreux.
+    """
+    if marqueur is None:
+        return True, "premiere_execution"
+    precedent = EtatNextcloud.depuis_dict(marqueur)
+    if etat_actuel.gf_active and not precedent.gf_active:
+        return True, "gf_reactive"
+    if etat_actuel.nc_version != precedent.nc_version:
+        return True, "nc_version_change"
+    if etat_actuel.gf_version != precedent.gf_version:
+        return True, "gf_version_change"
+    return False, "inchange"
+
+
+def verifier_et_reconcilier(
+    session: Session,
+    adaptateur: AdaptateurRessource,
+    lecteur_etat: Callable[[], EtatNextcloud],
+    *,
+    cle_marqueur: str = "nextcloud",
+) -> RapportReconciliation | None:
+    """Détecte un changement d'état Nextcloud (upgrade / réactivation GF) -> réconcilie.
+
+    `lecteur_etat` est INJECTÉ (callable -> EtatNextcloud) pour tester avec un mock. Compare
+    l'état courant au marqueur stocké (`etat_systeme[cle_marqueur]`) ; si la règle OU
+    déclenche (première fois / GF réactivé / version NC ou GF changée) -> `reconcilier_tout`
+    + met à jour le marqueur + commit, et retourne le rapport. Sinon -> None (no-op).
+    """
+    etat_actuel = lecteur_etat()
+    ligne = session.get(EtatSysteme, cle_marqueur)
+    marqueur = ligne.valeur if ligne is not None else None
+
+    doit, _raison = _doit_reconcilier(etat_actuel, marqueur)
+    if not doit:
+        return None
+
+    rapport = reconcilier_tout(session, adaptateur, declencheur="auto")
+
+    if ligne is not None:
+        ligne.valeur = etat_actuel.vers_dict()
+    else:
+        session.add(EtatSysteme(cle=cle_marqueur, valeur=etat_actuel.vers_dict()))
+    session.commit()
+
+    return rapport

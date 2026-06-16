@@ -255,6 +255,22 @@ class JournalAcces(Base, _UUIDPk):
     )
 
 
+class EtatSysteme(Base):
+    """Marqueur clé/valeur MUTABLE (pas un journal) — ex. dernier état Nextcloud vu.
+
+    Sert à la détection de changement (upgrade / réactivation de Group Folders) : on
+    compare l'état courant au dernier état mémorisé sous une `cle` (ex. "nextcloud").
+    """
+
+    __tablename__ = "etat_systeme"
+
+    cle: Mapped[str] = mapped_column(Text, primary_key=True)
+    valeur: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+
 # --- Cohérence de signature domaine <-> persistance ---------------------------
 
 
