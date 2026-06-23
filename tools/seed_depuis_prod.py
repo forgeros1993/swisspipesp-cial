@@ -14,6 +14,7 @@ import re
 from typing import Any
 
 from swisspipe.adapters.inbound.composition import construire_sessionmaker
+from swisspipe.core.domain.acteurs import TypeGroupe
 from swisspipe.core.domain.matrice import Matrice, Mode
 from swisspipe.persistence.models import (
     Dimension,
@@ -24,7 +25,6 @@ from swisspipe.persistence.models import (
     Octroi,
     Ressource,
     RessourceMapping,
-    TypeGroupe,
     ValeurDimension,
     signature_combinaison,
 )

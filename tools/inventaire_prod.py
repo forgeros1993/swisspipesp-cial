@@ -65,7 +65,7 @@ def _resume(photo: dict[str, Any]) -> str:
     n_acl_fine = sum(1 for s in soc if s["acl_fine_active"])
     user_direct = sum(r["n"] for r in photo["acl_fine_par_type"] if r["mapping_type"] == "user")
     return (
-        f"societes(folders)={len(soc)} | octrois_reels(groupe×folder)={n_groupes_total} | "
+        f"societes(folders)={len(soc)} | octrois_reels(groupe x folder)={n_groupes_total} | "
         f"folders_acl_fine_active={n_acl_fine} | droits_user_direct(INV-4)={user_direct} | "
         f"hierarchie={photo['hierarchie_custom_tags']}"
     )
