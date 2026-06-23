@@ -46,6 +46,15 @@ class DroitGroupe:
     groupe_id: str
     matrice: Matrice
 
+    def __post_init__(self) -> None:
+        # INV-4 : tout droit est porté par un GROUPE, jamais rien en direct. La garde vit
+        # ici (DTO du contrat) -> tout adaptateur en hérite par construction, sans avoir à
+        # la réimplémenter (le NC l'avait déjà ; elle devient ceinture-bretelles).
+        if not self.groupe_id or not self.groupe_id.strip():
+            raise ValueError(
+                "DroitGroupe sans groupe_id (INV-4 : un droit doit cibler un groupe, jamais vide)"
+            )
+
 
 @runtime_checkable
 class AdaptateurRessource(Protocol):

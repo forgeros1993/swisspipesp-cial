@@ -10,8 +10,8 @@ le port » (créer une ressource côté exécutant, injecter une dérive externe
 encapsulées dans un Harness par adaptateur — le test, lui, reste boîte noire.
 
 Divergences LÉGITIMES déclarées en capability flags (jamais du masquage) :
-- `rejette_groupe_vide` : le NC lève sur groupe_id vide (garde INV-4) ; le fake NON
-  (découverte : l'impl de référence ne porte pas cette garde). cf. C9.
+- `rejette_groupe_vide` : INV-4 garanti PAR LE DTO `DroitGroupe` (garde `__post_init__`) ->
+  fake ET NC lèvent désormais. Plus une divergence (la promesse est tenue en amont). cf. C9.
 - `lecture_fidele_additionnels` : le NC ne reconstruit pas CLASSEMENT/TÉLÉCHARGEMENT
   depuis les bits Group Folder (perte documentée, traduction.py) ; le fake oui. cf. C6.
 - `supporte_deny_sous_chemin` : REFUSER explicite sur un sous-chemin = L2 ; les deux ne
@@ -67,7 +67,7 @@ class HarnessFake:
 
     nom = "fake"
     caps = {
-        "rejette_groupe_vide": False,  # le fake ne porte pas la garde INV-4 (découverte)
+        "rejette_groupe_vide": True,  # INV-4 garanti par le DTO DroitGroupe (post-fix)
         "lecture_fidele_additionnels": True,  # stocke l'état exact
         "supporte_deny_sous_chemin": False,  # L2
     }
@@ -316,15 +316,30 @@ def test_c9_inv4_structurel(harness) -> None:
 def test_c9_inv4_groupe_vide_rejete(harness) -> None:
     """C9 (garde) — groupe_id vide rejeté.
 
-    DÉCOUVERTE déclarée : le NC lève (garde INV-4, adaptateur_nextcloud.py) ; le fake NON
-    (`rejette_groupe_vide=False`). On ne masque pas : pour le fake on SKIP avec raison,
-    pointant l'écart entre la promesse du port et l'impl de référence.
+    INV-4 désormais garanti par le DTO `DroitGroupe` (post-fix) : la garde fire à la
+    CONSTRUCTION du DroitGroupe, donc fake ET NC lèvent identiquement. Plus une divergence.
     """
     cle = harness.creer("c9")
     if not harness.caps["rejette_groupe_vide"]:
-        pytest.skip(
-            f"[{harness.nom}] n'impose PAS la garde groupe_id vide (INV-4) — "
-            "écart promesse/impl à corriger côté adaptateur, pas masqué"
-        )
+        pytest.skip(f"[{harness.nom}] capability rejette_groupe_vide=False")
     with pytest.raises((ValueError, OccError)):
+        # Le ValueError part dès la construction de DroitGroupe("", …) (garde DTO INV-4).
         harness.adaptateur.appliquer_droits(cle, {DroitGroupe("", ECRITURE)})
+
+
+# ───────────────────── Test direct du DTO (INV-4 au contrat) ─────────────────────
+
+
+def test_dto_droitgroupe_refuse_groupe_vide() -> None:
+    """Le DTO refuse un groupe_id vide ou blanc à la construction (INV-4, hermétique)."""
+    with pytest.raises(ValueError, match="INV-4"):
+        DroitGroupe("", ECRITURE)
+    with pytest.raises(ValueError, match="INV-4"):
+        DroitGroupe("   ", ECRITURE)
+
+
+def test_dto_droitgroupe_accepte_groupe_valide() -> None:
+    """Un groupe_id non vide construit un DroitGroupe normal."""
+    dg = DroitGroupe("grp_valide", ECRITURE)
+    assert dg.groupe_id == "grp_valide"
+    assert dg.matrice == ECRITURE
