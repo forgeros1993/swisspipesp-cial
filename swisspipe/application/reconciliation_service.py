@@ -264,6 +264,67 @@ def reconcilier_tout(
     return RapportReconciliation(tuple(resultats))
 
 
+def diagnostiquer_ressource(
+    session: Session,
+    adaptateur: AdaptateurRessource,
+    ressource_id: uuid.UUID,
+) -> Divergence:
+    """LECTURE SEULE : calcule la divergence (désiré cœur vs réel adaptateur) SANS écrire.
+
+    Aucun `appliquer_droits`, aucune ligne de journal. C'est le socle du mode dry-run/shadow
+    de l'inbound (CLI `verifier`, cron par défaut). La logique de décision reste dans le cœur
+    (`etat_desire` + `comparer_droits`) ; ici on ne fait qu'assembler la lecture. Même contrat
+    d'erreur que `reconcilier_ressource` (`RessourceNonMappeeError` si pas de mapping).
+    """
+    mapping = session.get(RessourceMapping, (ressource_id, ADAPTATEUR))
+    if mapping is None:
+        raise RessourceNonMappeeError(f"ressource {ressource_id} non mappée à '{ADAPTATEUR}'")
+    res_str = str(ressource_id)
+
+    lignes = session.execute(
+        select(OctroiModel, Groupe.cle)
+        .join(Groupe, Groupe.id == OctroiModel.groupe_id)
+        .where(OctroiModel.ressource_id == ressource_id)
+    ).all()
+    octrois: dict[tuple[str, str], Octroi] = {}
+    groupe_ids: set[str] = set()
+    for octroi_db, cle in lignes:
+        octrois[(res_str, cle)] = Octroi.depuis_jsonb(
+            {"mode": octroi_db.mode.value, "matrice": octroi_db.matrice}
+        )
+        groupe_ids.add(cle)
+
+    parents: dict[str, str | None] = {res_str: None}
+    desire = etat_desire(res_str, groupe_ids, parents, octrois)
+    reel = adaptateur.lire_droits_effectifs(mapping.cle_externe)
+    return comparer_droits(desire, reel)
+
+
+def diagnostiquer_tout(
+    session: Session,
+    adaptateur: AdaptateurRessource,
+) -> RapportReconciliation:
+    """Balaie toutes les ressources mappées en LECTURE SEULE (dry-run). N'écrit jamais.
+
+    Statut par ressource : "conforme" si pas de dérive, "diverge" sinon, "erreur" si échec
+    (résilient — une erreur n'arrête pas le balayage). Aucun commit, aucun apply.
+    """
+    ids = session.scalars(
+        select(RessourceMapping.ressource_id)
+        .where(RessourceMapping.adaptateur == ADAPTATEUR)
+        .order_by(RessourceMapping.ressource_id)
+    ).all()
+    resultats: list[ResultatRessource] = []
+    for rid in ids:
+        try:
+            div = diagnostiquer_ressource(session, adaptateur, rid)
+            statut = "conforme" if div.est_conforme else "diverge"
+            resultats.append(ResultatRessource(rid, statut, divergence=div))
+        except Exception as e:
+            resultats.append(ResultatRessource(rid, "erreur", erreur=f"{type(e).__name__}: {e}"))
+    return RapportReconciliation(tuple(resultats))
+
+
 def _doit_reconcilier(
     etat_actuel: EtatNextcloud, marqueur: dict[str, object] | None
 ) -> tuple[bool, str]:
