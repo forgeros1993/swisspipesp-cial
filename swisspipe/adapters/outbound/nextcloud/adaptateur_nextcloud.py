@@ -17,7 +17,8 @@ reçue/relue est convertie via traduction.py (sens aller et inverse).
 from __future__ import annotations
 
 import json
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
+from dataclasses import dataclass
 from typing import Any
 
 from swisspipe.adapters.outbound.nextcloud.occ_runner import executer_occ
@@ -32,6 +33,48 @@ from swisspipe.core.ports.adaptateur_ressource import DescripteurRessource, Droi
 
 # Chemins racine du contenu d'un Group Folder dans filecache (selon versions NC).
 _CHEMINS_RACINE = ("files", "")
+
+
+# --- Projection en mode OMBRE (le PLAN) : calcule les commandes occ SANS les exécuter ---
+
+
+@dataclass(frozen=True)
+class PlanProjection:
+    """Plan de projection = suite ORDONNÉE de commandes occ qui SERAIENT exécutées.
+
+    Aucune n'est exécutée : ce type est pur (données). `rendu()` l'affiche.
+    """
+
+    commandes: tuple[tuple[str, ...], ...]
+
+    def rendu(self) -> str:
+        return "\n".join("php occ " + " ".join(cmd) for cmd in self.commandes)
+
+
+def planifier_projection_occ(
+    chemin_hote: str,
+    ressources: Iterable[tuple[str, Collection[DroitGroupe]]],
+) -> PlanProjection:
+    """Construit le PLAN occ d'une projection (mode ombre). PUR : n'exécute RIEN.
+
+    Pour chaque ressource (nom, droits déjà résolus + bornés par le cœur) : un Group
+    Folder au point de montage (`{chemin_hote}/{nom}`), l'activation de l'ACL, puis une
+    règle ACL par groupe. Les verbes proviennent de matrice_vers_verbes_acl (traduction
+    L1 réutilisée, pas réécrite). L'id externe étant inconnu hors exécution, le point de
+    montage sert de référence symbolique dans le plan.
+    """
+    base = chemin_hote.rstrip("/")
+    commandes: list[tuple[str, ...]] = []
+    for nom, droits in ressources:
+        point = f"{base}/{nom}"
+        commandes.append(("groupfolders:create", point))
+        commandes.append(("groupfolders:permissions", point, "-e"))
+        for dg in sorted(droits, key=lambda d: d.groupe_id):
+            verbes = matrice_vers_verbes_acl(dg.matrice)
+            commandes.append(
+                ("groupfolders:permissions", point, "/", "-g", dg.groupe_id, "--", *verbes)
+            )
+    return PlanProjection(tuple(commandes))
 
 
 class AdaptateurNextcloud:
@@ -63,7 +106,10 @@ class AdaptateurNextcloud:
         return executer_occ(args, alias=self._ssh_alias, occ_dir=self._occ_dir)
 
     def _lister_folders(self) -> list[dict[str, Any]]:
-        return json.loads(self._occ(["groupfolders:list", "--output=json"]))
+        folders: list[dict[str, Any]] = json.loads(
+            self._occ(["groupfolders:list", "--output=json"])
+        )
+        return folders
 
     def _folder_par_id(self, cle_externe: str) -> dict[str, Any] | None:
         return next(
