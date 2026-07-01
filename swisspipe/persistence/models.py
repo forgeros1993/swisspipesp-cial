@@ -73,6 +73,14 @@ class ActionJournal(enum.Enum):
     MODIFICATION = "modification"
 
 
+class TypeEvenement(enum.Enum):
+    """Type d'événement de cycle de vie (journal_evenements). Enum EXTENSIBLE : une
+    seule valeur pour l'instant (spec §5.2) ; montage/archivage/changement de modèle
+    viendront plus tard, sans toucher au journal des droits."""
+
+    INSTANCIATION = "instanciation"
+
+
 def _pg_enum(python_enum: type[enum.Enum], nom: str) -> Enum:
     """Enum Postgres natif stockant les .value (tokens), pas les .name."""
     return Enum(python_enum, name=nom, values_callable=lambda e: [m.value for m in e])
@@ -131,8 +139,16 @@ class Espace(Base, _UUIDPk, _Horodatage):
     created_via: Mapped[str | None] = mapped_column(Text, nullable=True)
     # Unicité de combinaison (§4.2) : signature dérivée, cohérente avec le domaine
     # (cf. signature_combinaison ci-dessous). Index unique = pas deux espaces au
-    # même jeu de coordonnées.
+    # même jeu de coordonnées. Pour un espace TRANSVERSE (instance) : signature
+    # synthétique unique dérivée de l'id (pas de coordonnées) -> contrainte préservée.
     combinaison_signature: Mapped[str] = mapped_column(Text, unique=True, nullable=False)
+    # --- Transverses (L2) : une instance est un espace nature='transverse' lié à son
+    # modèle. Nullables -> les espaces dimensionnels L1 restent valides tels quels.
+    modele_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("modele.id"), nullable=True
+    )
+    metadonnees: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    cle_reconciliation: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class EspaceCoordonnee(Base):
@@ -248,6 +264,42 @@ class JournalAcces(Base, _UUIDPk):
     )
     matrice_avant: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     matrice_apres: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    cause: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    acteur: Mapped[str | None] = mapped_column(Text, nullable=True)
+    at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+# --- Transverses : gabarit (modèle) + journal des événements de cycle de vie -----
+
+
+class Modele(Base, _UUIDPk, _Horodatage):
+    """Gabarit d'un espace transverse (spec §5.2). Composants sérialisés en jsonb au
+    format du domaine (core/domain/modele.py : Modele.vers_jsonb)."""
+
+    __tablename__ = "modele"
+
+    nom: Mapped[str] = mapped_column(Text, nullable=False)
+    arborescence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    schema_metadonnees: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
+    roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+
+
+class JournalEvenement(Base, _UUIDPk):
+    """JOURNAL append-only des ÉVÉNEMENTS de cycle de vie (instanciation, …).
+
+    SÉPARÉ de journal_acces (journal des DROITS, INV-6) : un événement n'a ni groupe ni
+    matrice. Pas de FK sur espace_id (historique, survit à l'archivage). Immuable au
+    niveau Postgres (trigger anti UPDATE/DELETE, cf. migration 0003). Pas d'updated_at.
+    """
+
+    __tablename__ = "journal_evenements"
+
+    espace_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    type_evenement: Mapped[TypeEvenement] = mapped_column(
+        _pg_enum(TypeEvenement, "type_evenement"), nullable=False
+    )
     cause: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
     acteur: Mapped[str | None] = mapped_column(Text, nullable=True)
     at: Mapped[datetime] = mapped_column(

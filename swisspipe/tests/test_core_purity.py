@@ -101,3 +101,31 @@ def test_core_imports_are_pure() -> None:
                     f"{rel}:{lineno}: import interdit '{module}' (préfixe banni '{hit}')"
                 )
     assert not violations, "Cœur impur — imports interdits trouvés :\n" + "\n".join(violations)
+
+
+# Modules transverses (L2 étape 1) — doivent rester dans le périmètre PUR du cœur.
+_TRANSVERSES = ("swisspipe.core.domain.modele", "swisspipe.core.domain.instance")
+
+
+def test_modele_et_instance_couverts_et_purs() -> None:
+    """§5 : Modèle + Instance sont scannés par le garde-fou ET n'importent rien d'interdit.
+
+    Le domaine transverse (modele.py, instance.py) doit rester 100% stdlib : aucune lib
+    d'infra, aucune couche adapters/persistence, et pas de pydantic (règle domaine).
+    """
+    scannes = {_module_dotted_path(p) for p in _core_py_files()}
+    for mod in _TRANSVERSES:
+        assert mod in scannes, f"{mod} hors du scan de pureté du cœur"
+
+    violations: list[str] = []
+    for py_file in _core_py_files():
+        name = _module_dotted_path(py_file)
+        if name not in _TRANSVERSES:
+            continue
+        banned = BANNED_ALL + BANNED_DOMAIN  # domaine : pydantic banni en plus
+        tree = ast.parse(py_file.read_text(encoding="utf-8"), filename=str(py_file))
+        for module, lineno in _imported_modules(tree, name):
+            hit = _is_banned(module, banned)
+            if hit:
+                violations.append(f"{name}:{lineno}: import interdit '{module}' (banni '{hit}')")
+    assert not violations, "Modèle/Instance impurs :\n" + "\n".join(violations)
