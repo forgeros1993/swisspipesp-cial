@@ -122,13 +122,13 @@ def test_plan_reflete_le_differentiel(db_session: Session) -> None:
     _inst, montage_id = _setup(db_session)
     plan = planifier_projection_transverse(db_session, montage_id)
 
-    def verbes(point: str) -> list[str] | None:
+    def verbes(nom: str) -> list[str] | None:
         for c in plan.commandes:
-            if c[:2] == ("groupfolders:permissions", point) and "--" in c:
+            if c[:3] == ("groupfolders:permissions", "/RH", nom) and "--" in c:
                 return list(c[c.index("--") + 1 :])
         return None
 
-    assert verbes("/RH/Plans") == matrice_vers_verbes_acl(ECRITURE)  # +write
-    assert verbes("/RH/Correspondance") == matrice_vers_verbes_acl(LECTURE)  # -write
-    assert "+write" in verbes("/RH/Plans")
-    assert "+write" not in verbes("/RH/Correspondance")
+    assert verbes("Plans") == matrice_vers_verbes_acl(ECRITURE)  # +write
+    assert verbes("Correspondance") == matrice_vers_verbes_acl(LECTURE)  # -write
+    assert "+write" in verbes("Plans")
+    assert "+write" not in verbes("Correspondance")

@@ -57,22 +57,32 @@ def planifier_projection_occ(
 ) -> PlanProjection:
     """Construit le PLAN occ d'une projection (mode ombre). PUR : n'exécute RIEN.
 
-    Pour chaque ressource (nom, droits déjà résolus + bornés par le cœur) : un Group
-    Folder au point de montage (`{chemin_hote}/{nom}`), l'activation de l'ACL, puis une
-    règle ACL par groupe. Les verbes proviennent de matrice_vers_verbes_acl (traduction
-    L1 réutilisée, pas réécrite). L'id externe étant inconnu hors exécution, le point de
-    montage sert de référence symbolique dans le plan.
+    Mécanique RÉELLE Group Folders (vérifiée sur serveur) : UN SEUL Group Folder pour
+    l'instance (mount = `chemin_hote`), l'ACL activée, un accès BASE par groupe
+    (`groupfolders:group`, sinon le groupe ne voit rien), puis une règle ACL PAR
+    SOUS-DOSSIER (une ressource = un sous-dossier du GF). Prérequis hors occ : les
+    sous-dossiers sont matérialisés côté stockage (`mkdir __groupfolders/<id>/files/<nom>`
+    + `groupfolders:scan`), l'id externe étant inconnu hors exécution — le `chemin_hote`
+    sert de référence symbolique. Les verbes proviennent de matrice_vers_verbes_acl
+    (traduction L1 réutilisée, déjà bornée par le cœur). Une ressource hors portée n'a ni
+    sous-dossier ni règle (absente du plan).
     """
-    base = chemin_hote.rstrip("/")
-    commandes: list[tuple[str, ...]] = []
+    gf = chemin_hote.rstrip("/")
+    ressources = list(ressources)
+    commandes: list[tuple[str, ...]] = [
+        ("groupfolders:create", gf),
+        ("groupfolders:permissions", gf, "-e"),
+    ]
+    # Accès BASE de chaque groupe au GF (union des groupes vus dans la portée).
+    groupes = sorted({dg.groupe_id for _nom, droits in ressources for dg in droits})
+    for groupe_id in groupes:
+        commandes.append(("groupfolders:group", gf, groupe_id, "read", "write"))
+    # Règle ACL PAR SOUS-DOSSIER (bornée par le cœur en amont).
     for nom, droits in ressources:
-        point = f"{base}/{nom}"
-        commandes.append(("groupfolders:create", point))
-        commandes.append(("groupfolders:permissions", point, "-e"))
         for dg in sorted(droits, key=lambda d: d.groupe_id):
             verbes = matrice_vers_verbes_acl(dg.matrice)
             commandes.append(
-                ("groupfolders:permissions", point, "/", "-g", dg.groupe_id, "--", *verbes)
+                ("groupfolders:permissions", gf, nom, "-g", dg.groupe_id, "--", *verbes)
             )
     return PlanProjection(tuple(commandes))
 

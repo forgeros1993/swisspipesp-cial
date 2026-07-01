@@ -76,23 +76,33 @@ def _ressource_id(session: Session, espace_id, chemin: str):
     )
 
 
-def _perms(plan, point: str, groupe_id: str):
-    """Verbes ACL posés pour `groupe_id` au `point`, ou None."""
+def _perms(plan, gf: str, nom: str, groupe_id: str):
+    """Verbes ACL posés pour `groupe_id` sur le SOUS-DOSSIER `nom` du GF `gf`, ou None."""
     for c in plan.commandes:
-        if c[:2] == ("groupfolders:permissions", point) and "-g" in c:
+        if c[:3] == ("groupfolders:permissions", gf, nom) and "-g" in c:
             if c[c.index("-g") + 1] == groupe_id and "--" in c:
                 return list(c[c.index("--") + 1 :])
     return None
 
 
-def _points_crees(plan) -> set[str]:
+def _gf_crees(plan) -> set[str]:
     return {c[1] for c in plan.commandes if c[0] == "groupfolders:create"}
+
+
+def _sous_dossiers_acl(plan) -> set[str]:
+    return {
+        c[2]
+        for c in plan.commandes
+        if c[0] == "groupfolders:permissions" and len(c) > 3 and "-g" in c
+    }
 
 
 def _setup_imposee(session: Session):
     """Instance imposée : rôle Responsable pose ÉCRITURE sur /Plans (groupe perso marie).
     Montage plafond LECTURE, portée {/Plans, /Correspondance} (PAS /Divers)."""
-    modele = _modele(PolitiqueDroits.IMPOSEE, {"responsable": {"plans": ECRITURE}})
+    modele = _modele(
+        PolitiqueDroits.IMPOSEE, {"responsable": {"plans": ECRITURE, "correspondance": ECRITURE}}
+    )
     modele_id = enregistrer_modele(session, modele)
     inst = instancier_modele(
         session, modele, modele_id=modele_id, nom="XY", metadonnees={}, acteur="rh"
@@ -131,15 +141,17 @@ def _setup_imposee(session: Session):
 def test_plan_imposee_structure(db_session: Session) -> None:
     _inst, montage_id, _perso = _setup_imposee(db_session)
     plan = planifier_projection_transverse(db_session, montage_id)
-    # Structure : un GF par ressource DANS la portée, au point de montage /RH.
-    assert _points_crees(plan) == {"/RH/Plans", "/RH/Correspondance"}
+    # UN SEUL GF (l'instance) au point de montage /RH...
+    assert _gf_crees(plan) == {"/RH"}
+    # ...avec les sous-dossiers de la portée en ACL (pas /Divers).
+    assert _sous_dossiers_acl(plan) == {"Plans", "Correspondance"}
 
 
 def test_plafond_respecte_dans_le_plan(db_session: Session) -> None:
     # Octroi sous-jacent ÉCRITURE, plafond LECTURE -> le plan pose LECTURE, PAS ÉCRITURE.
     _inst, montage_id, perso = _setup_imposee(db_session)
     plan = planifier_projection_transverse(db_session, montage_id)
-    verbes = _perms(plan, "/RH/Plans", perso)
+    verbes = _perms(plan, "/RH", "Plans", perso)
     assert verbes == matrice_vers_verbes_acl(LECTURE)
     assert "+write" not in verbes  # anti-escalade visible dans le plan
 
@@ -148,7 +160,7 @@ def test_portee_respectee_divers_absent(db_session: Session) -> None:
     _inst, montage_id, _perso = _setup_imposee(db_session)
     plan = planifier_projection_transverse(db_session, montage_id)
     # /Divers est hors portée -> ABSENT du plan.
-    assert "/RH/Divers" not in _points_crees(plan)
+    assert "Divers" not in _sous_dossiers_acl(plan)
     assert all("Divers" not in arg for cmd in plan.commandes for arg in cmd)
 
 
@@ -188,7 +200,7 @@ def test_plan_deleguee(db_session: Session) -> None:
         acteur="admin",
     )
     plan = planifier_projection_transverse(db_session, montage.montage_id)
-    assert _perms(plan, "/Equipe/Plans", str(orga.id)) == matrice_vers_verbes_acl(LECTURE)
+    assert _perms(plan, "/Equipe", "Plans", str(orga.id)) == matrice_vers_verbes_acl(LECTURE)
 
 
 # ---------------------------------------------------------------------------
@@ -226,4 +238,4 @@ def test_plan_reutilise_traduction_l1(db_session: Session) -> None:
     plan = planifier_projection_transverse(db_session, montage_id)
     # Les verbes du plan proviennent EXACTEMENT de matrice_vers_verbes_acl (L1), pas d'un
     # mapping réécrit dans la couche projection.
-    assert _perms(plan, "/RH/Plans", perso) == matrice_vers_verbes_acl(LECTURE)
+    assert _perms(plan, "/RH", "Plans", perso) == matrice_vers_verbes_acl(LECTURE)
