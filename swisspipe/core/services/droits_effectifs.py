@@ -149,3 +149,59 @@ def droit_effectif_compte(
     if matrice_combinee is None:
         return DroitEffectif.aucun()
     return DroitEffectif.accorde(matrice_combinee)
+
+
+# ===========================================================================
+# EXTENSION L2 (étape 4) — droits effectifs MONTAGE-AWARE (§9.3, point 3)
+# ===========================================================================
+#
+# Additif : ces fonctions ÉTENDENT le résolveur ci-dessus sans le modifier. Un montage
+# ne peut JAMAIS accorder au-delà de son `matrice_plafond` (garde-fou anti-escalade) et
+# n'expose que sa portée. Toujours PUR (INV-3 : on lit l'état figé, aucune évaluation de
+# rôle « live » — les octrois posés par rôle (étape 3) sont déjà dans `octrois`).
+
+
+def borner_matrice(matrice: Matrice, plafond: Matrice) -> Matrice:
+    """Borne une matrice par un plafond (§9.3) : niveau MIN + additionnels en INTERSECTION.
+
+    Le résultat est TOUJOURS couvert par `plafond` (`plafond.couvre(resultat)` vrai) : c'est
+    le garde-fou anti-escalade. N'accorde jamais plus que la matrice de base non plus
+    (intersection) — le plafond ne fait que réduire.
+    """
+    niveau = matrice.niveau if matrice.niveau.rang <= plafond.niveau.rang else plafond.niveau
+    additionnels = matrice.additionnels & plafond.additionnels
+    return Matrice(niveau, additionnels)
+
+
+def droit_effectif_via_montage(
+    groupe_ids: Iterable[str],
+    ressource_id: str,
+    parents: Mapping[str, str | None],
+    octrois: Mapping[tuple[str, str], Octroi],
+    *,
+    plafond: Matrice | None = None,
+    portee: frozenset[str] | None = None,
+) -> DroitEffectif:
+    """Droit effectif d'un compte sur une ressource VUE À TRAVERS UN MONTAGE (§9.3).
+
+    Ordre spec :
+    1. PORTÉE (§5.5) : si `portee` est fournie et que la ressource n'y est pas -> invisible
+       (aucun droit) : un montage n'expose que sa portion déclarée.
+    2. Base L1 : `droit_effectif_compte` (héritage modifier/refuser + union multi-groupes,
+       incluant les octrois posés par rôle — déjà figés, INV-3). RÉUTILISÉ tel quel.
+    3. PLAFOND : si un plafond est fourni, on BORNE la matrice de base par le plafond. Le
+       plafond ne CRÉE jamais un droit (si la base n'accorde rien, le résultat reste vide).
+
+    `plafond=None` et `portee=None` -> comportement IDENTIQUE au résolveur L1 (non-régression
+    des espaces dimensionnels non montés).
+    """
+    if portee is not None and ressource_id not in portee:
+        return DroitEffectif.aucun()
+
+    base = droit_effectif_compte(groupe_ids, ressource_id, parents, octrois)
+    if base.matrice is None:
+        return base  # deny-by-default : un plafond n'invente jamais un droit
+
+    if plafond is None:
+        return base
+    return DroitEffectif.accorde(borner_matrice(base.matrice, plafond))

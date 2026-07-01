@@ -135,3 +135,22 @@ def test_modele_et_instance_couverts_et_purs() -> None:
             if hit:
                 violations.append(f"{name}:{lineno}: import interdit '{module}' (banni '{hit}')")
     assert not violations, "Modèle/Instance impurs :\n" + "\n".join(violations)
+
+
+def test_calcul_montage_aware_reste_dans_le_coeur_pur() -> None:
+    """§5 étape 4 : le calcul de droits effectifs montage-aware reste agnostique.
+
+    Fichier de services (pydantic toléré) : on interdit juste l'infra + les couches
+    adapters/persistence (BANNED_ALL). Aucune évaluation live, aucun NC dans le calcul.
+    """
+    mod = "swisspipe.core.services.droits_effectifs"
+    scannes = {_module_dotted_path(p) for p in _core_py_files()}
+    assert mod in scannes, f"{mod} hors du scan de pureté du cœur"
+    py = next(p for p in _core_py_files() if _module_dotted_path(p) == mod)
+    tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+    violations = [
+        f"{mod}:{lineno}: {module}"
+        for module, lineno in _imported_modules(tree, mod)
+        if _is_banned(module, BANNED_ALL)
+    ]
+    assert not violations, "Calcul de droits impur :\n" + "\n".join(violations)
