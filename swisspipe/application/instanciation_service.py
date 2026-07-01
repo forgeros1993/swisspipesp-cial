@@ -53,6 +53,7 @@ def enregistrer_modele(session: Session, modele: Modele) -> uuid.UUID:
         arborescence=jsonb["arborescence_imposee"],
         schema_metadonnees=jsonb["schema_metadonnees"],
         roles=jsonb["roles"],
+        matrice_par_role=jsonb["matrice_par_role"],
     )
     session.add(row)
     session.flush()

@@ -42,6 +42,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from swisspipe.core.domain.acteurs import TypeGroupe
 from swisspipe.core.domain.matrice import Mode
 from swisspipe.core.domain.montage import EtatMontage
+from swisspipe.core.domain.role_affectation import SourceAffectation
 from swisspipe.core.domain.topologie import Coordonnee, EspaceDimensionnel
 
 # Convention de nommage des contraintes -> migrations déterministes.
@@ -286,6 +287,8 @@ class Modele(Base, _UUIDPk, _Horodatage):
     arborescence: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     schema_metadonnees: Mapped[list[dict[str, Any]]] = mapped_column(JSONB, nullable=False)
     roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
+    # Matrice imposée par rôle (spec §5.4), additif : {rôle → {dossier → matrice jsonb}}.
+    matrice_par_role: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
 
 
 class JournalEvenement(Base, _UUIDPk):
@@ -333,6 +336,60 @@ class Montage(Base, _UUIDPk, _Horodatage):
     consenti_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     etat: Mapped[EtatMontage] = mapped_column(
         _pg_enum(EtatMontage, "etat_montage"), nullable=False, server_default=text("'actif'")
+    )
+
+
+# --- Rôles : définition + résolution rôle→titulaire ---------------------------
+
+
+class Role(Base, _UUIDPk, _Horodatage):
+    """Rôle défini par un modèle (spec §5.4). Identité métier = (modele_id, cle)."""
+
+    __tablename__ = "role"
+    __table_args__ = (UniqueConstraint("modele_id", "cle", name="uq_role_modele_cle"),)
+
+    modele_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("modele.id"), nullable=False
+    )
+    cle: Mapped[str] = mapped_column(Text, nullable=False)
+    libelle: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class RoleAffectation(Base, _UUIDPk, _Horodatage):
+    """Résolution rôle→titulaire (spec §5.4). Cible = groupe PERSONNEL (INV-4), instant
+    figé (effectif_depuis, INV-3), source='humain' (INV-1). retire_at = titulaire retiré."""
+
+    __tablename__ = "role_affectation"
+
+    espace_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("espace.id"), nullable=False
+    )
+    role_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("role.id"), nullable=False
+    )
+    groupe_perso_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("groupe.id"), nullable=False
+    )
+    source: Mapped[SourceAffectation] = mapped_column(
+        _pg_enum(SourceAffectation, "source_affectation"), nullable=False
+    )
+    effectif_depuis: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    retire_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class CorrespondanceCompte(Base):
+    """Compte ↔ (systeme, cle_externe) — pour l'ERP (L4). PK (systeme, cle_externe)."""
+
+    __tablename__ = "correspondance_compte"
+
+    compte_id: Mapped[str] = mapped_column(Text, nullable=False)
+    systeme: Mapped[str] = mapped_column(Text, primary_key=True)
+    cle_externe: Mapped[str] = mapped_column(Text, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
     )
 
 

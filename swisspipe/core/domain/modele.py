@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from swisspipe.core.domain.matrice import Matrice
+
 
 class SystemeReference(Enum):
     """Provenance d'un champ de métadonnée (spec §5.2) : saisi humain, poussé par une
@@ -137,10 +139,18 @@ class Modele:
     arborescence_imposee: ArborescenceImposee
     schema_metadonnees: tuple[ChampMeta, ...] = field(default_factory=tuple)
     roles: tuple[str, ...] = field(default_factory=tuple)
+    # Matrice IMPOSÉE par rôle (spec §5.4) : {rôle → {dossier → Matrice L1}}. Additif
+    # (défaut vide -> rétrocompatible). Ne cite que des rôles/dossiers du modèle.
+    matrice_par_role: Mapping[str, Mapping[str, Matrice]] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "schema_metadonnees", tuple(self.schema_metadonnees))
         object.__setattr__(self, "roles", tuple(self.roles))
+        object.__setattr__(
+            self,
+            "matrice_par_role",
+            {role: dict(par_dossier) for role, par_dossier in self.matrice_par_role.items()},
+        )
         if not isinstance(self.arborescence_imposee, ArborescenceImposee):
             raise TypeError(
                 "arborescence_imposee doit être une ArborescenceImposee, "
@@ -149,6 +159,24 @@ class Modele:
         for c in self.schema_metadonnees:
             if not isinstance(c, ChampMeta):
                 raise TypeError(f"champ de schéma invalide : {type(c)!r}")
+        self._valider_matrice_par_role()
+
+    def _valider_matrice_par_role(self) -> None:
+        """La matrice par rôle ne cite que des rôles ET des dossiers du modèle."""
+        roles = set(self.roles)
+        dossiers = set(self.arborescence_imposee.cles)
+        for role_cle, par_dossier in self.matrice_par_role.items():
+            if role_cle not in roles:
+                raise ValueError(f"matrice par rôle : rôle inconnu du modèle : {role_cle!r}")
+            for dossier_cle, matrice in par_dossier.items():
+                if dossier_cle not in dossiers:
+                    raise ValueError(
+                        f"matrice par rôle : ressource inconnue du modèle : {dossier_cle!r}"
+                    )
+                if not isinstance(matrice, Matrice):
+                    raise TypeError(
+                        f"plafond de rôle doit être une Matrice, reçu {type(matrice)!r}"
+                    )
 
     @property
     def cles_schema(self) -> frozenset[str]:
@@ -179,15 +207,24 @@ class Modele:
             "arborescence_imposee": self.arborescence_imposee.vers_jsonb(),
             "schema_metadonnees": [c.vers_jsonb() for c in self.schema_metadonnees],
             "roles": list(self.roles),
+            "matrice_par_role": {
+                role: {dossier: m.vers_jsonb() for dossier, m in par_dossier.items()}
+                for role, par_dossier in self.matrice_par_role.items()
+            },
         }
 
     @classmethod
     def depuis_jsonb(cls, data: Mapping[str, Any]) -> Modele:
         schema: Iterable[Mapping[str, Any]] = data.get("schema_metadonnees", ())
+        matrice_par_role = {
+            role: {dossier: Matrice.depuis_jsonb(m) for dossier, m in par_dossier.items()}
+            for role, par_dossier in data.get("matrice_par_role", {}).items()
+        }
         return cls(
             id=data["id"],
             nom=data["nom"],
             arborescence_imposee=ArborescenceImposee.depuis_jsonb(data["arborescence_imposee"]),
             schema_metadonnees=tuple(ChampMeta.depuis_jsonb(c) for c in schema),
             roles=tuple(data.get("roles", ())),
+            matrice_par_role=matrice_par_role,
         )

@@ -108,6 +108,8 @@ _TRANSVERSES = (
     "swisspipe.core.domain.modele",
     "swisspipe.core.domain.instance",
     "swisspipe.core.domain.montage",
+    "swisspipe.core.domain.role",
+    "swisspipe.core.domain.role_affectation",
 )
 
 
