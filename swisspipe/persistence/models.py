@@ -41,6 +41,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from swisspipe.core.domain.acteurs import TypeGroupe
 from swisspipe.core.domain.matrice import Mode
+from swisspipe.core.domain.modele import PolitiqueDroits
 from swisspipe.core.domain.montage import EtatMontage
 from swisspipe.core.domain.role_affectation import SourceAffectation
 from swisspipe.core.domain.topologie import Coordonnee, EspaceDimensionnel
@@ -289,6 +290,12 @@ class Modele(Base, _UUIDPk, _Horodatage):
     roles: Mapped[list[str]] = mapped_column(JSONB, nullable=False)
     # Matrice imposée par rôle (spec §5.4), additif : {rôle → {dossier → matrice jsonb}}.
     matrice_par_role: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+    # Curseur de gouvernance (spec §5.4), additif : défaut 'imposee'.
+    politique_droits: Mapped[PolitiqueDroits] = mapped_column(
+        _pg_enum(PolitiqueDroits, "politique_droits"),
+        nullable=False,
+        server_default=text("'imposee'"),
+    )
 
 
 class JournalEvenement(Base, _UUIDPk):

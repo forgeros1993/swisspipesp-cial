@@ -54,6 +54,7 @@ def enregistrer_modele(session: Session, modele: Modele) -> uuid.UUID:
         schema_metadonnees=jsonb["schema_metadonnees"],
         roles=jsonb["roles"],
         matrice_par_role=jsonb["matrice_par_role"],
+        politique_droits=modele.politique_droits,
     )
     session.add(row)
     session.flush()

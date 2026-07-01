@@ -36,6 +36,19 @@ class SystemeReference(Enum):
     MIXTE = "mixte"
 
 
+class PolitiqueDroits(Enum):
+    """Curseur de gouvernance des droits d'un modèle (spec §5.4).
+
+    - IMPOSEE : les droits viennent des rôles (matrice par rôle) — étape 3.
+    - DELEGUEE : un admin attribue lui-même des droits, borné par un plafond — étape 5.
+    - LIBRE : cas dégénéré, sans logique dédiée (traité comme DELEGUEE).
+    """
+
+    IMPOSEE = "imposee"
+    DELEGUEE = "deleguee"
+    LIBRE = "libre"
+
+
 @dataclass(frozen=True)
 class DossierImpose:
     """Un dossier du squelette imposé. Identité = `cle` ; `libelle` = nom affiché."""
@@ -142,10 +155,15 @@ class Modele:
     # Matrice IMPOSÉE par rôle (spec §5.4) : {rôle → {dossier → Matrice L1}}. Additif
     # (défaut vide -> rétrocompatible). Ne cite que des rôles/dossiers du modèle.
     matrice_par_role: Mapping[str, Mapping[str, Matrice]] = field(default_factory=dict)
+    # Curseur de gouvernance (spec §5.4). Additif, défaut IMPOSEE (rétrocompat étapes 1-4).
+    politique_droits: PolitiqueDroits = PolitiqueDroits.IMPOSEE
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "schema_metadonnees", tuple(self.schema_metadonnees))
         object.__setattr__(self, "roles", tuple(self.roles))
+        if not isinstance(self.politique_droits, PolitiqueDroits):
+            recu = type(self.politique_droits)
+            raise TypeError(f"politique_droits doit être un PolitiqueDroits, reçu {recu!r}")
         object.__setattr__(
             self,
             "matrice_par_role",
@@ -211,6 +229,7 @@ class Modele:
                 role: {dossier: m.vers_jsonb() for dossier, m in par_dossier.items()}
                 for role, par_dossier in self.matrice_par_role.items()
             },
+            "politique_droits": self.politique_droits.value,
         }
 
     @classmethod
@@ -227,4 +246,5 @@ class Modele:
             schema_metadonnees=tuple(ChampMeta.depuis_jsonb(c) for c in schema),
             roles=tuple(data.get("roles", ())),
             matrice_par_role=matrice_par_role,
+            politique_droits=PolitiqueDroits(data.get("politique_droits", "imposee")),
         )
