@@ -41,6 +41,7 @@ from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 from swisspipe.core.domain.acteurs import TypeGroupe
 from swisspipe.core.domain.matrice import Mode
+from swisspipe.core.domain.montage import EtatMontage
 from swisspipe.core.domain.topologie import Coordonnee, EspaceDimensionnel
 
 # Convention de nommage des contraintes -> migrations déterministes.
@@ -74,11 +75,12 @@ class ActionJournal(enum.Enum):
 
 
 class TypeEvenement(enum.Enum):
-    """Type d'événement de cycle de vie (journal_evenements). Enum EXTENSIBLE : une
-    seule valeur pour l'instant (spec §5.2) ; montage/archivage/changement de modèle
-    viendront plus tard, sans toucher au journal des droits."""
+    """Type d'événement de cycle de vie (journal_evenements). Enum EXTENSIBLE, étendu
+    par migration ; le journal des DROITS (journal_acces) reste séparé et intouché."""
 
     INSTANCIATION = "instanciation"
+    MONTAGE = "montage"
+    DEMONTAGE = "demontage"
 
 
 def _pg_enum(python_enum: type[enum.Enum], nom: str) -> Enum:
@@ -304,6 +306,33 @@ class JournalEvenement(Base, _UUIDPk):
     acteur: Mapped[str | None] = mapped_column(Text, nullable=True)
     at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class Montage(Base, _UUIDPk, _Horodatage):
+    """Fenêtre d'une instance transverse sur un hôte (spec §4.4). Décide OÙ + PLAFOND,
+    jamais QUI (INV-1) : aucune colonne de bénéficiaire.
+
+    `portee` (§5.5) : jsonb {"chemins": [...]}. `matrice_plafond` : Matrice L1 sérialisée
+    (pas de nouveau type). `consenti_par` : auteur du consentement de l'hôte (deux clés),
+    PAS un bénéficiaire. `etat` : réutilise l'enum du domaine (montage.EtatMontage).
+    """
+
+    __tablename__ = "montage"
+
+    espace_transverse_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("espace.id"), nullable=False
+    )
+    espace_hote_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("espace.id"), nullable=False
+    )
+    chemin_hote: Mapped[str] = mapped_column(Text, nullable=False)
+    portee: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    matrice_plafond: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    consenti_par: Mapped[str] = mapped_column(Text, nullable=False)
+    consenti_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    etat: Mapped[EtatMontage] = mapped_column(
+        _pg_enum(EtatMontage, "etat_montage"), nullable=False, server_default=text("'actif'")
     )
 
 

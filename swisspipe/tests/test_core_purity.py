@@ -103,8 +103,12 @@ def test_core_imports_are_pure() -> None:
     assert not violations, "Cœur impur — imports interdits trouvés :\n" + "\n".join(violations)
 
 
-# Modules transverses (L2 étape 1) — doivent rester dans le périmètre PUR du cœur.
-_TRANSVERSES = ("swisspipe.core.domain.modele", "swisspipe.core.domain.instance")
+# Modules transverses (L2) — doivent rester dans le périmètre PUR du cœur.
+_TRANSVERSES = (
+    "swisspipe.core.domain.modele",
+    "swisspipe.core.domain.instance",
+    "swisspipe.core.domain.montage",
+)
 
 
 def test_modele_et_instance_couverts_et_purs() -> None:

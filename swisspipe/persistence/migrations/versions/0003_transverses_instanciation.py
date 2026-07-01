@@ -19,6 +19,7 @@ enums. On ajoute :
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import sqlalchemy as sa
 from alembic import op
@@ -38,15 +39,15 @@ _PK = sa.text("gen_random_uuid()")
 _NOW = sa.text("now()")
 
 
-def _id() -> sa.Column:
+def _id() -> sa.Column[Any]:
     return sa.Column("id", _UUID, primary_key=True, server_default=_PK)
 
 
-def _created() -> sa.Column:
+def _created() -> sa.Column[Any]:
     return sa.Column("created_at", sa.DateTime(timezone=True), server_default=_NOW, nullable=False)
 
 
-def _updated() -> sa.Column:
+def _updated() -> sa.Column[Any]:
     return sa.Column(
         "updated_at",
         sa.DateTime(timezone=True),
