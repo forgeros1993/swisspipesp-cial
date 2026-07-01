@@ -56,7 +56,7 @@ def etat_projete_transverse(session: Session, montage_id: uuid.UUID) -> EtatProj
     montage = session.get(Montage, montage_id)
     if montage is None:
         raise MontageIntrouvableError(f"montage {montage_id} introuvable")
-    plafond = Matrice.depuis_jsonb(montage.matrice_plafond)
+    plafonds = montage.matrice_plafond  # plafond PAR RESSOURCE (spec §4.4)
     chemins_exposes = set(montage.portee["chemins"])
 
     ressources: list[RessourceProjetee] = []
@@ -67,6 +67,7 @@ def etat_projete_transverse(session: Session, montage_id: uuid.UUID) -> EtatProj
     ).all():
         if ressource.chemin not in chemins_exposes:
             continue  # hors portée -> absent de la projection
+        plafond = Matrice.depuis_jsonb(plafonds[ressource.chemin])  # plafond de CETTE ressource
         droits: set[DroitGroupe] = set()
         for octroi in session.scalars(
             select(OctroiModel).where(OctroiModel.ressource_id == ressource.id)

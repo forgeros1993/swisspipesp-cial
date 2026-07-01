@@ -112,7 +112,11 @@ def test_monter_persiste_montage_et_trace(db_session: Session) -> None:
     assert montage.espace_hote_id == hote
     assert montage.etat.value == "actif"
     assert set(montage.portee["chemins"]) == {"/Documents", "/Salaire"}
-    assert montage.matrice_plafond == ECRITURE.vers_jsonb()
+    # Plafond PAR RESSOURCE (§4.4) : Matrice nue étendue en plafond uniforme sur la portée.
+    assert montage.matrice_plafond == {
+        "/Documents": ECRITURE.vers_jsonb(),
+        "/Salaire": ECRITURE.vers_jsonb(),
+    }
 
     evs = db_session.scalars(
         select(JournalEvenement).where(JournalEvenement.espace_id == inst.espace_id)

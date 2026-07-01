@@ -40,7 +40,7 @@ def _monter(
         espace_hote_id=hote,
         chemin_hote="/Projets",
         portee=Portee(chemins=frozenset(portee)),
-        matrice_plafond=ECRITURE,
+        matrice_plafond={c: ECRITURE for c in portee},
         consenti_par=consenti_par,
         consenti_at="2026-07-01T10:00:00Z",
     )
@@ -56,7 +56,7 @@ def test_montage_valide_avec_consentement() -> None:
     assert m.espace_transverse_id == "inst-employe"
     assert m.espace_hote_id == "espace-rh"
     assert m.chemin_hote == "/Projets"
-    assert m.matrice_plafond == ECRITURE
+    assert m.matrice_plafond == {"/Documents": ECRITURE, "/Salaire": ECRITURE}
     assert m.consenti_par == "admin_rh"
     assert m.etat is EtatMontage.ACTIF
 
@@ -77,9 +77,9 @@ def test_inv1_montage_ne_nomme_aucun_beneficiaire() -> None:
 
 
 def test_matrice_plafond_est_la_matrice_l1() -> None:
-    # Pas de nouveau type de matrice : le plafond EST une Matrice L1.
+    # Pas de nouveau type de matrice : le plafond par ressource RÉUTILISE la Matrice L1.
     m = _monter(portee={"/Documents"})
-    assert isinstance(m.matrice_plafond, Matrice)
+    assert all(isinstance(v, Matrice) for v in m.matrice_plafond.values())
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +107,7 @@ def test_meme_instance_deux_portees_deux_fenetres_un_stock() -> None:
         espace_hote_id="espace-rh",
         chemin_hote="/RH",
         portee=Portee(chemins=frozenset({"/Documents", "/Salaire", "/Evaluations"})),
-        matrice_plafond=ECRITURE,
+        matrice_plafond={c: ECRITURE for c in ("/Documents", "/Salaire", "/Evaluations")},
         consenti_par="admin_rh",
     )
     montage_perso = monter(
@@ -117,7 +117,7 @@ def test_meme_instance_deux_portees_deux_fenetres_un_stock() -> None:
         espace_hote_id="perso:alice",
         chemin_hote="/MonEspace",
         portee=Portee(chemins=frozenset({"/Documents", "/Salaire"})),
-        matrice_plafond=LECTURE,
+        matrice_plafond={c: LECTURE for c in ("/Documents", "/Salaire")},
         consenti_par="alice",
     )
     # 2 fenêtres différentes...

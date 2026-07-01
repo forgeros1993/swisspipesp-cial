@@ -69,7 +69,11 @@ def droit_effectif_montre(
         montage = session.get(Montage, montage_id)
         if montage is None:
             raise MontageIntrouvableError(f"montage {montage_id} introuvable")
-        plafond = Matrice.depuis_jsonb(montage.matrice_plafond)
+        # Plafond PAR RESSOURCE (spec §4.4) : on borne par le plafond DE CETTE ressource.
+        chemin_cible = session.scalar(select(Ressource.chemin).where(Ressource.id == ressource_id))
+        plafonds = montage.matrice_plafond
+        if chemin_cible is not None and chemin_cible in plafonds:
+            plafond = Matrice.depuis_jsonb(plafonds[chemin_cible])
         chemins_exposes = set(montage.portee["chemins"])
         portee = frozenset(
             str(rid)

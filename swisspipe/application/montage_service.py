@@ -17,14 +17,14 @@ consentement de l'hôte, pas un bénéficiaire).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from swisspipe.core.domain.matrice import Matrice
-from swisspipe.core.domain.montage import EtatMontage, Portee, monter
+from swisspipe.core.domain.montage import EtatMontage, Portee, monter, plafond_vers_jsonb
 from swisspipe.persistence.models import JournalEvenement, Montage, Ressource, TypeEvenement
 
 
@@ -69,14 +69,23 @@ def monter_instance(
     espace_hote_id: uuid.UUID,
     chemin_hote: str,
     portee_chemins: Iterable[str],
-    matrice_plafond: Matrice,
+    matrice_plafond: Matrice | Mapping[str, Matrice],
     consenti_par: str,
     acteur: str,
     consenti_at: str | None = None,
 ) -> MontageCree:
     """Monte une instance sur un hôte (spec §4.4). Le cœur valide (portée ⊆ ressources
-    réelles de l'instance + deux clés) AVANT toute écriture -> rien persisté si invalide.
+    réelles de l'instance + deux clés + couverture du plafond) AVANT toute écriture.
+
+    `matrice_plafond` est un plafond PAR RESSOURCE {ressource → Matrice}. Une Matrice nue
+    est acceptée par commodité et étendue en plafond uniforme sur toute la portée.
     """
+    portee = frozenset(portee_chemins)
+    if isinstance(matrice_plafond, Matrice):
+        plafond: Mapping[str, Matrice] = {chemin: matrice_plafond for chemin in portee}
+    else:
+        plafond = dict(matrice_plafond)
+
     chemins_instance = set(
         session.scalars(
             select(Ressource.chemin).where(Ressource.espace_id == espace_transverse_id)
@@ -84,15 +93,15 @@ def monter_instance(
     )
     montage_id = uuid.uuid4()
 
-    # Le cœur décide : lève ValueError si portée hors instance ou consentement manquant.
+    # Le cœur décide : lève ValueError si portée hors instance / consentement / plafond incomplet.
     dom = monter(
         montage_id=str(montage_id),
         espace_transverse_id=str(espace_transverse_id),
         chemins_instance=chemins_instance,
         espace_hote_id=str(espace_hote_id),
         chemin_hote=chemin_hote,
-        portee=Portee(chemins=frozenset(portee_chemins)),
-        matrice_plafond=matrice_plafond,
+        portee=Portee(chemins=portee),
+        matrice_plafond=plafond,
         consenti_par=consenti_par,
         consenti_at=consenti_at,
     )
@@ -104,7 +113,7 @@ def monter_instance(
             espace_hote_id=espace_hote_id,
             chemin_hote=dom.chemin_hote,
             portee={"chemins": sorted(dom.portee.chemins)},
-            matrice_plafond=dom.matrice_plafond.vers_jsonb(),
+            matrice_plafond=plafond_vers_jsonb(dom.matrice_plafond),
             consenti_par=dom.consenti_par,
             etat=EtatMontage.ACTIF,
         )

@@ -15,11 +15,22 @@ pas en dur (§3).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
 from enum import Enum
+from typing import Any
 
 from swisspipe.core.domain.matrice import Matrice
+
+
+def plafond_vers_jsonb(matrice_plafond: Mapping[str, Matrice]) -> dict[str, Any]:
+    """Sérialise le plafond par ressource : {ressource → matrice jsonb} (spec §4.4)."""
+    return {ressource: m.vers_jsonb() for ressource, m in matrice_plafond.items()}
+
+
+def plafond_depuis_jsonb(data: Mapping[str, Any]) -> dict[str, Matrice]:
+    """Désérialise le plafond par ressource. Inverse de `plafond_vers_jsonb`."""
+    return {ressource: Matrice.depuis_jsonb(v) for ressource, v in data.items()}
 
 
 class EtatMontage(Enum):
@@ -47,8 +58,9 @@ class Montage:
     """Fenêtre d'une instance sur un hôte. Décide OÙ + PLAFOND, jamais QUI (INV-1).
 
     `consenti_par` = admin de l'hôte qui a consenti (règle des DEUX CLÉS) — c'est un
-    auteur de consentement, PAS un bénéficiaire de droits. `matrice_plafond` est une
-    Matrice L1 (plafond par ressource). `consenti_at` = horodatage (métadonnée, injecté).
+    auteur de consentement, PAS un bénéficiaire de droits. `matrice_plafond` (spec §4.4)
+    est un PLAFOND PAR RESSOURCE : {ressource → Matrice L1}. Règle de sûreté : il doit
+    couvrir CHAQUE ressource de la portée. `consenti_at` = horodatage (métadonnée, injecté).
     """
 
     id: str
@@ -56,7 +68,7 @@ class Montage:
     espace_hote_id: str
     chemin_hote: str
     portee: Portee
-    matrice_plafond: Matrice
+    matrice_plafond: Mapping[str, Matrice]
     consenti_par: str
     consenti_at: str | None = None
     etat: EtatMontage = EtatMontage.ACTIF
@@ -64,10 +76,10 @@ class Montage:
     def __post_init__(self) -> None:
         if not isinstance(self.portee, Portee):
             raise TypeError(f"portee doit être une Portee, reçu {type(self.portee)!r}")
-        if not isinstance(self.matrice_plafond, Matrice):
-            raise TypeError(
-                f"matrice_plafond doit être une Matrice, reçu {type(self.matrice_plafond)!r}"
-            )
+        object.__setattr__(self, "matrice_plafond", dict(self.matrice_plafond))
+        for ressource, m in self.matrice_plafond.items():
+            if not isinstance(m, Matrice):
+                raise TypeError(f"plafond de {ressource!r} doit être une Matrice, reçu {type(m)!r}")
         if not isinstance(self.etat, EtatMontage):
             raise TypeError(f"etat doit être un EtatMontage, reçu {type(self.etat)!r}")
         # Règle des deux clés (INV-1) : pas de montage sans consentement de l'hôte.
@@ -75,6 +87,13 @@ class Montage:
             raise ValueError("consentement de l'hôte requis (règle des deux clés)")
         if not self.chemin_hote:
             raise ValueError("chemin_hote requis")
+        # Sûreté §4.4 : le plafond doit couvrir CHAQUE ressource de la portée.
+        non_couvertes = sorted(self.portee.chemins - set(self.matrice_plafond))
+        if non_couvertes:
+            raise ValueError(
+                "plafond incomplet — ressource(s) de portée sans plafond : "
+                + ", ".join(non_couvertes)
+            )
 
     @property
     def exposees(self) -> frozenset[str]:
@@ -98,7 +117,7 @@ def monter(
     espace_hote_id: str,
     chemin_hote: str,
     portee: Portee,
-    matrice_plafond: Matrice,
+    matrice_plafond: Mapping[str, Matrice],
     consenti_par: str,
     consenti_at: str | None = None,
 ) -> Montage:
@@ -106,7 +125,8 @@ def monter(
 
     Vérifie que la portée ne référence QUE des ressources existant réellement dans
     l'instance (`chemins_instance`) — exposer un dossier absent est refusé (ValueError).
-    Le consentement (deux clés) et les types sont validés par le Montage lui-même.
+    Le consentement (deux clés), la couverture du plafond par ressource et les types sont
+    validés par le Montage lui-même.
     """
     disponibles = set(chemins_instance)
     absentes = sorted(portee.chemins - disponibles)
