@@ -154,3 +154,18 @@ def test_calcul_montage_aware_reste_dans_le_coeur_pur() -> None:
         if _is_banned(module, BANNED_ALL)
     ]
     assert not violations, "Calcul de droits impur :\n" + "\n".join(violations)
+
+
+def test_delta_projection_reste_dans_le_coeur_pur() -> None:
+    """§5 étape 8 : le delta de projection (reconcile) est data-pure, zéro occ/infra."""
+    mod = "swisspipe.core.services.delta_projection"
+    scannes = {_module_dotted_path(p) for p in _core_py_files()}
+    assert mod in scannes, f"{mod} hors du scan de pureté du cœur"
+    py = next(p for p in _core_py_files() if _module_dotted_path(p) == mod)
+    tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
+    violations = [
+        f"{mod}:{lineno}: {module}"
+        for module, lineno in _imported_modules(tree, mod)
+        if _is_banned(module, BANNED_ALL)
+    ]
+    assert not violations, "Delta de projection impur :\n" + "\n".join(violations)

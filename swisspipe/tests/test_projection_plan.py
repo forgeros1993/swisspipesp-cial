@@ -130,7 +130,8 @@ def _setup_imposee(session: Session):
         consenti_par="admin",
         acteur="admin",
     )
-    return inst, montage.montage_id, str(perso.id)
+    # La projection cible groupe.cle (nom NC réel), pas l'UUID interne.
+    return inst, montage.montage_id, "perso:marie"
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +201,7 @@ def test_plan_deleguee(db_session: Session) -> None:
         acteur="admin",
     )
     plan = planifier_projection_transverse(db_session, montage.montage_id)
-    assert _perms(plan, "/Equipe", "Plans", str(orga.id)) == matrice_vers_verbes_acl(LECTURE)
+    assert _perms(plan, "/Equipe", "Plans", "orga:equipe") == matrice_vers_verbes_acl(LECTURE)
 
 
 # ---------------------------------------------------------------------------
@@ -239,3 +240,13 @@ def test_plan_reutilise_traduction_l1(db_session: Session) -> None:
     # Les verbes du plan proviennent EXACTEMENT de matrice_vers_verbes_acl (L1), pas d'un
     # mapping réécrit dans la couche projection.
     assert _perms(plan, "/RH", "Plans", perso) == matrice_vers_verbes_acl(LECTURE)
+
+
+def test_create_avec_acl_no_default_permission(db_session: Session) -> None:
+    """Anti-escalade par héritage : un chemin SANS règle ACL ne doit hériter AUCUN droit
+    de l'accès base (deny-by-default). Le GF est donc créé avec le flag natif
+    --acl-no-default-permission (revue adversariale étape 8)."""
+    _inst, montage_id, _perso = _setup_imposee(db_session)
+    plan = planifier_projection_transverse(db_session, montage_id)
+    creates = [c for c in plan.commandes if c[0] == "groupfolders:create"]
+    assert creates and all("--acl-no-default-permission" in c for c in creates)

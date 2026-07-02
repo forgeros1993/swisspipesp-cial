@@ -17,7 +17,7 @@ reçue/relue est convertie via traduction.py (sens aller et inverse).
 from __future__ import annotations
 
 import json
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -29,10 +29,53 @@ from swisspipe.adapters.outbound.nextcloud.traduction import (
     permissions_nextcloud_vers_matrice,
     regle_acl_vers_matrice,
 )
+from swisspipe.core.domain.matrice import Matrice
 from swisspipe.core.ports.adaptateur_ressource import DescripteurRessource, DroitGroupe
+from swisspipe.core.services.delta_projection import DeltaProjection
 
 # Chemins racine du contenu d'un Group Folder dans filecache (selon versions NC).
 _CHEMINS_RACINE = ("files", "")
+
+
+# --- Lecture de l'état ACL réel d'un GF transverse (source de vérité : SQL) ----------
+
+
+def decoder_etat_acl(lignes: Iterable[Mapping[str, Any]]) -> dict[str, dict[str, Matrice]]:
+    """Lignes SQL group_folders_acl ⋈ filecache -> { sous_chemin → { groupe → Matrice } }.
+
+    PUR (testable sans serveur). RÉUTILISE regle_acl_vers_matrice (étape 7). Ne retient
+    que les règles ciblant un GROUPE (INV-4) sur un SOUS-DOSSIER (`files/<nom>`) ; la
+    racine (`files`/``) et les règles sans droit décodable (permissions=0) sont omises.
+    """
+    etat: dict[str, dict[str, Matrice]] = {}
+    for ligne in lignes:
+        if ligne.get("mapping_type") != "group":
+            continue
+        path = str(ligne.get("path", ""))
+        if not path.startswith("files/"):
+            continue  # racine ou hors contenu : pas un sous-dossier de ressource
+        nom = path[len("files/") :]
+        matrice = regle_acl_vers_matrice(int(ligne["mask"]), int(ligne["permissions"]))
+        if matrice is None:
+            continue
+        etat.setdefault(nom, {})[str(ligne["mapping_id"])] = matrice
+    return etat
+
+
+def lire_etat_acl_transverse(
+    storage_id: int, *, alias: str | None = None, occ_dir: str | None = None
+) -> dict[str, dict[str, Matrice]]:
+    """État ACL RÉEL d'un GF (I/O, LECTURE SEULE) : SQL puis décodage pur ci-dessus."""
+    lignes = executer_select(
+        "SELECT a.mapping_type, a.mapping_id, a.mask, a.permissions, c.path "
+        "FROM {p}group_folders_acl a "
+        "JOIN {p}filecache c ON c.fileid = a.fileid "
+        "WHERE c.storage = ?",
+        [storage_id],
+        alias=alias,
+        occ_dir=occ_dir,
+    )
+    return decoder_etat_acl(lignes)
 
 
 # --- Projection en mode OMBRE (le PLAN) : calcule les commandes occ SANS les exécuter ---
@@ -70,7 +113,9 @@ def planifier_projection_occ(
     gf = chemin_hote.rstrip("/")
     ressources = list(ressources)
     commandes: list[tuple[str, ...]] = [
-        ("groupfolders:create", gf),
+        # --acl-no-default-permission : deny-by-default natif — un chemin SANS règle ACL
+        # n'hérite AUCUN droit de l'accès base (anti-escalade par héritage, revue ét. 8).
+        ("groupfolders:create", gf, "--acl-no-default-permission"),
         ("groupfolders:permissions", gf, "-e"),
     ]
     # Accès BASE de chaque groupe au GF (union des groupes vus dans la portée).
@@ -84,6 +129,35 @@ def planifier_projection_occ(
             commandes.append(
                 ("groupfolders:permissions", gf, nom, "-g", dg.groupe_id, "--", *verbes)
             )
+    return PlanProjection(tuple(commandes))
+
+
+def planifier_reconcile_occ(
+    gf_ref: str,
+    delta: DeltaProjection,
+    *,
+    groupes_a_ajouter: Iterable[str] = (),
+    groupes_a_retirer: Iterable[str] = (),
+) -> PlanProjection:
+    """Traduit un DeltaProjection (cœur, §3.2) en commandes occ. PUR : n'exécute RIEN.
+
+    Reconcile ACL UNIQUEMENT — ne crée jamais de GF ni de sous-dossier (la structure est
+    assurée à part) et ne détruit JAMAIS de données (INV-5) : le retrait = `clear` de la
+    règle ACL + retrait de l'accès base (`groupfolders:group -d`). `gf_ref` = id du GF
+    (ou mount point symbolique en mode ombre). Ordre déterministe.
+    """
+    commandes: list[tuple[str, ...]] = []
+    for groupe_id in sorted(groupes_a_ajouter):
+        commandes.append(("groupfolders:group", gf_ref, groupe_id, "read", "write"))
+    if delta.a_creer:
+        commandes.append(("groupfolders:permissions", gf_ref, "-e"))
+    for (nom, groupe_id), matrice in sorted({**delta.a_creer, **delta.a_modifier}.items()):
+        verbes = matrice_vers_verbes_acl(matrice)
+        commandes.append(("groupfolders:permissions", gf_ref, nom, "-g", groupe_id, "--", *verbes))
+    for nom, groupe_id in sorted(delta.a_retirer):
+        commandes.append(("groupfolders:permissions", gf_ref, nom, "-g", groupe_id, "--", "clear"))
+    for groupe_id in sorted(groupes_a_retirer):
+        commandes.append(("groupfolders:group", gf_ref, groupe_id, "-d"))
     return PlanProjection(tuple(commandes))
 
 

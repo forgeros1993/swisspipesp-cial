@@ -149,3 +149,14 @@ def regle_acl_vers_matrice(mask: int, permissions: int) -> Matrice | None:
     gouvernés.
     """
     return permissions_nextcloud_vers_matrice(mask & permissions)
+
+
+def matrice_projetable(matrice: Matrice) -> Matrice:
+    """Réduit une Matrice à son sous-ensemble PROJETABLE en verbes ACL (le comparable).
+
+    CLASSEMENT et TÉLÉCHARGEMENT n'ont aucun verbe ACL (mapping non bijectif documenté
+    ci-dessus) : une matrice qui les porte, une fois posée puis relue, revient SANS eux.
+    Pour que le reconcile soit idempotent (désiré == relu), le désiré doit être comparé
+    sur ce sous-ensemble : niveau + CRÉATION uniquement. Pur.
+    """
+    return Matrice(matrice.niveau, matrice.additionnels & {DroitAdditionnel.CREATION})
