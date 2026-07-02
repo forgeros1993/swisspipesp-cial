@@ -30,6 +30,7 @@ from swisspipe.core.ports.adaptateur_ressource import DroitGroupe
 from swisspipe.core.services.delta_projection import DeltaProjection, calculer_delta
 from swisspipe.core.services.droits_effectifs import borner_matrice
 from swisspipe.persistence.models import (
+    Espace,
     Groupe,
     JournalEvenement,
     Montage,
@@ -229,10 +230,29 @@ def _auditer_pertes(
     existence : containment jsonb sur la cause). journal_acces n'est jamais touché."""
     montage = session.get(Montage, montage_id)
     assert montage is not None  # etat_projete_transverse a déjà validé l'existence
+    _auditer_pertes_espace(
+        session,
+        montage.espace_transverse_id,
+        pertes,
+        acteur,
+        contexte={"montage_id": str(montage_id)},
+    )
+
+
+def _auditer_pertes_espace(
+    session: Session,
+    espace_id: uuid.UUID,
+    pertes: list[DroitNonProjetable],
+    acteur: str,
+    *,
+    contexte: dict[str, str],
+) -> None:
+    """Cœur de l'audit lossy, commun transverse/dimensionnel : dédup par containment
+    jsonb sur la cause (contexte + perte), une ligne par perte NOUVELLE."""
     ecrit = False
     for perte in pertes:
         cause = {
-            "montage_id": str(montage_id),
+            **contexte,
             "ressource": perte.ressource,
             "groupe": perte.groupe,
             "additionnels": list(perte.additionnels),
@@ -240,7 +260,7 @@ def _auditer_pertes(
         deja = session.scalar(
             select(JournalEvenement.id)
             .where(
-                JournalEvenement.espace_id == montage.espace_transverse_id,
+                JournalEvenement.espace_id == espace_id,
                 JournalEvenement.type_evenement == TypeEvenement.PROJECTION_PARTIELLE,
                 JournalEvenement.cause.contains(cause),
             )
@@ -250,7 +270,7 @@ def _auditer_pertes(
             continue  # perte identique déjà auditée -> pas de duplication
         session.add(
             JournalEvenement(
-                espace_id=montage.espace_transverse_id,
+                espace_id=espace_id,
                 type_evenement=TypeEvenement.PROJECTION_PARTIELLE,
                 cause=cause,
                 acteur=acteur,
@@ -259,3 +279,74 @@ def _auditer_pertes(
         ecrit = True
     if ecrit:
         session.flush()
+
+
+# --- Reconcile DIMENSIONNEL (démo/L1+) : 1 GF par société, ACL par département --------
+
+
+def reconcilier_projection_dimensionnelle(
+    session: Session,
+    espace_id: uuid.UUID,
+    *,
+    executeur: ExecuteurProjection,
+    apply: bool = False,
+    acteur: str = "system:projection",
+) -> RapportProjection:
+    """Reconcile la projection d'un espace DIMENSIONNEL (société) : sous-dossiers =
+    ses Ressources (départements), ACL par sous-chemin = ses Octrois directs.
+
+    Mince assemblage au-dessus du moteur transverse (étapes 8/9) : PAS de plafond ni de
+    portée — l'Octroi de la ressource EST l'état désiré (déjà figé, INV-3), normalisé au
+    projetable (matrice_projetable) pour l'idempotence. HERITER/REFUSER (matrice None)
+    ne se projettent pas. Delta cœur + exécuteur + audit lossy réutilisés tels quels.
+    """
+    espace = session.get(Espace, espace_id)
+    if espace is None:
+        raise MontageIntrouvableError(f"espace {espace_id} introuvable")
+
+    desire: dict[str, dict[str, Matrice]] = {}
+    pertes: list[DroitNonProjetable] = []
+    for ressource in session.scalars(
+        select(Ressource).where(Ressource.espace_id == espace_id).order_by(Ressource.chemin)
+    ).all():
+        nom = ressource.chemin.lstrip("/")
+        par_groupe: dict[str, Matrice] = {}
+        for octroi, groupe_cle in session.execute(
+            select(OctroiModel, Groupe.cle)
+            .join(Groupe, Groupe.id == OctroiModel.groupe_id)
+            .where(OctroiModel.ressource_id == ressource.id)
+        ).all():
+            if octroi.matrice is None:  # HERITER/REFUSER : rien à projeter
+                continue
+            matrice = Matrice.depuis_jsonb(octroi.matrice)
+            projetee = matrice_projetable(matrice)
+            perdus = matrice.additionnels - projetee.additionnels
+            if perdus:
+                pertes.append(
+                    DroitNonProjetable(
+                        ressource=nom,
+                        groupe=groupe_cle,
+                        additionnels=tuple(sorted(a.value for a in perdus)),
+                    )
+                )
+            par_groupe[groupe_cle] = projetee
+        desire[nom] = par_groupe
+
+    actuel = executeur.lire_etat()
+    delta = calculer_delta(desire, actuel)
+
+    if not apply:
+        return RapportProjection(delta=delta, applique=False, droits_non_projetables=tuple(pertes))
+
+    if not delta.est_vide:
+        groupes_desires = frozenset(g for par_groupe in desire.values() for g in par_groupe)
+        executeur.appliquer_delta(delta, groupes_desires)
+
+    if pertes:
+        _auditer_pertes_espace(
+            session, espace_id, pertes, acteur, contexte={"espace_id": str(espace_id)}
+        )
+
+    return RapportProjection(
+        delta=delta, applique=not delta.est_vide, droits_non_projetables=tuple(pertes)
+    )
