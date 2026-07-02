@@ -83,6 +83,9 @@ class TypeEvenement(enum.Enum):
     INSTANCIATION = "instanciation"
     MONTAGE = "montage"
     DEMONTAGE = "demontage"
+    # Perte de projection auditée (étape 9) : un droit désiré porte un additionnel sans
+    # verbe ACL Nextcloud (CLASSEMENT/TÉLÉCHARGEMENT) — enforcement inchangé, perte VISIBLE.
+    PROJECTION_PARTIELLE = "projection_partielle"
 
 
 def _pg_enum(python_enum: type[enum.Enum], nom: str) -> Enum:

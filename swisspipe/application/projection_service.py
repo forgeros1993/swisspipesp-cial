@@ -29,7 +29,13 @@ from swisspipe.core.domain.montage import EtatMontage
 from swisspipe.core.ports.adaptateur_ressource import DroitGroupe
 from swisspipe.core.services.delta_projection import DeltaProjection, calculer_delta
 from swisspipe.core.services.droits_effectifs import borner_matrice
-from swisspipe.persistence.models import Groupe, Montage, Ressource
+from swisspipe.persistence.models import (
+    Groupe,
+    JournalEvenement,
+    Montage,
+    Ressource,
+    TypeEvenement,
+)
 from swisspipe.persistence.models import Octroi as OctroiModel
 
 
@@ -128,11 +134,25 @@ class ExecuteurProjection(Protocol):
 
 
 @dataclass(frozen=True)
+class DroitNonProjetable:
+    """Un droit désiré dont des additionnels n'ont AUCUN verbe ACL Nextcloud.
+
+    L'enforcement ne change pas (décision spec) : la matrice est projetée SANS ces
+    additionnels (matrice_projetable). Cette structure rend la perte VISIBLE (INV-6).
+    """
+
+    ressource: str
+    groupe: str
+    additionnels: tuple[str, ...]  # tokens du domaine (ex. "classement")
+
+
+@dataclass(frozen=True)
 class RapportProjection:
-    """Issue d'un reconcile de projection : le delta constaté + s'il a été appliqué."""
+    """Issue d'un reconcile de projection : delta constaté, appliqué ou non, pertes."""
 
     delta: DeltaProjection
     applique: bool
+    droits_non_projetables: tuple[DroitNonProjetable, ...] = ()
 
 
 def reconcilier_projection(
@@ -141,6 +161,7 @@ def reconcilier_projection(
     *,
     executeur: ExecuteurProjection,
     apply: bool = False,
+    acteur: str = "system:projection",
 ) -> RapportProjection:
     """Reconcile la projection d'un transverse monté (moule du reconcile L1, spec §3.2).
 
@@ -149,21 +170,92 @@ def reconcilier_projection(
     archivé) → lit l'état RÉEL (executeur) → calcule le delta (cœur pur) →
     SHADOW/dry-run par défaut (aucune écriture) ; `apply=True` exécute UNIQUEMENT le
     delta. No-op STRICT si conforme (delta vide -> zéro mutation). Idempotent.
+
+    Mapping lossy AUDITABLE : les additionnels sans verbe ACL (CLASSEMENT/TÉLÉCHARGEMENT)
+    sont relevés dans `droits_non_projetables` (constat, même en shadow) ; lors d'un apply
+    effectif avec pertes, une ligne journal_evenements 'projection_partielle' est écrite
+    PAR perte (INV-6 : jamais silencieuse). journal_acces n'est jamais touché ici.
     """
     etat = etat_projete_transverse(session, montage_id)
     # Comparer LE COMPARABLE : CLASSEMENT/TÉLÉCHARGEMENT n'ont pas de verbe ACL (perte
     # documentée dans traduction.py) — sans cette normalisation, la relecture divergerait
     # du désiré à chaque run (a_modifier perpétuel, idempotence cassée).
-    desire: dict[str, dict[str, Matrice]] = {
-        r.nom: {dg.groupe_id: matrice_projetable(dg.matrice) for dg in r.droits}
-        for r in etat.ressources
-    }
+    desire: dict[str, dict[str, Matrice]] = {}
+    pertes: list[DroitNonProjetable] = []
+    for r in etat.ressources:
+        par_groupe: dict[str, Matrice] = {}
+        for dg in r.droits:
+            projetee = matrice_projetable(dg.matrice)
+            perdus = dg.matrice.additionnels - projetee.additionnels
+            if perdus:
+                pertes.append(
+                    DroitNonProjetable(
+                        ressource=r.nom,
+                        groupe=dg.groupe_id,
+                        additionnels=tuple(sorted(a.value for a in perdus)),
+                    )
+                )
+            par_groupe[dg.groupe_id] = projetee
+        desire[r.nom] = par_groupe
     actuel = executeur.lire_etat()
     delta = calculer_delta(desire, actuel)
 
-    if not apply or delta.est_vide:
-        return RapportProjection(delta=delta, applique=False)
+    if not apply:
+        return RapportProjection(delta=delta, applique=False, droits_non_projetables=tuple(pertes))
 
-    groupes_desires = frozenset(g for par_groupe in desire.values() for g in par_groupe)
-    executeur.appliquer_delta(delta, groupes_desires)
-    return RapportProjection(delta=delta, applique=True)
+    if not delta.est_vide:
+        groupes_desires = frozenset(g for par_groupe in desire.values() for g in par_groupe)
+        executeur.appliquer_delta(delta, groupes_desires)
+
+    # Perte AUDITÉE (INV-6, revue étape 9) : le déclencheur est le CYCLE DE VIE de la
+    # perte, pas le delta — une perte constatée sur apply est journalisée MÊME si le
+    # delta est vide (montage projeté avant l'audit, ou journal perdu sur rollback),
+    # et une perte identique DÉJÀ auditée n'est jamais réécrite (pas de spam).
+    if pertes:
+        _auditer_pertes(session, montage_id, pertes, acteur)
+
+    return RapportProjection(
+        delta=delta, applique=not delta.est_vide, droits_non_projetables=tuple(pertes)
+    )
+
+
+def _auditer_pertes(
+    session: Session,
+    montage_id: uuid.UUID,
+    pertes: list[DroitNonProjetable],
+    acteur: str,
+) -> None:
+    """Écrit une ligne 'projection_partielle' PAR perte non encore auditée (dédup par
+    existence : containment jsonb sur la cause). journal_acces n'est jamais touché."""
+    montage = session.get(Montage, montage_id)
+    assert montage is not None  # etat_projete_transverse a déjà validé l'existence
+    ecrit = False
+    for perte in pertes:
+        cause = {
+            "montage_id": str(montage_id),
+            "ressource": perte.ressource,
+            "groupe": perte.groupe,
+            "additionnels": list(perte.additionnels),
+        }
+        deja = session.scalar(
+            select(JournalEvenement.id)
+            .where(
+                JournalEvenement.espace_id == montage.espace_transverse_id,
+                JournalEvenement.type_evenement == TypeEvenement.PROJECTION_PARTIELLE,
+                JournalEvenement.cause.contains(cause),
+            )
+            .limit(1)
+        )
+        if deja is not None:
+            continue  # perte identique déjà auditée -> pas de duplication
+        session.add(
+            JournalEvenement(
+                espace_id=montage.espace_transverse_id,
+                type_evenement=TypeEvenement.PROJECTION_PARTIELLE,
+                cause=cause,
+                acteur=acteur,
+            )
+        )
+        ecrit = True
+    if ecrit:
+        session.flush()

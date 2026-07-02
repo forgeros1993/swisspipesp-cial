@@ -86,6 +86,21 @@ def monter_instance(
     else:
         plafond = dict(matrice_plafond)
 
+    # Unicité du point de montage parmi les montages ACTIFS : deux montages actifs au
+    # même chemin_hote résoudraient le MÊME Group Folder (mountPoint = la clé externe)
+    # et le reconcile de l'un retirerait les règles de l'autre (flapping destructif).
+    # Un montage ARCHIVÉ libère son chemin (réversibilité préservée).
+    doublon = session.scalar(
+        select(Montage.id).where(
+            Montage.chemin_hote == chemin_hote, Montage.etat == EtatMontage.ACTIF
+        )
+    )
+    if doublon is not None:
+        raise ValueError(
+            f"chemin_hote {chemin_hote!r} déjà occupé par le montage actif {doublon} — "
+            "démonter (archiver) d'abord, ou choisir un autre point de montage"
+        )
+
     chemins_instance = set(
         session.scalars(
             select(Ressource.chemin).where(Ressource.espace_id == espace_transverse_id)

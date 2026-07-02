@@ -254,3 +254,46 @@ def test_portee_absente_refusee_rien_persiste(db_session: Session) -> None:
         )
         == 0
     )
+
+
+def test_deux_montages_actifs_meme_chemin_hote_refuse(db_session: Session) -> None:
+    """Major revue étape 9 : deux montages ACTIFS au même chemin_hote résoudraient le
+    même Group Folder (flapping destructif au reconcile) -> REFUS à la pose. Un montage
+    ARCHIVÉ libère son chemin_hote (réversibilité préservée)."""
+    import pytest as _pytest
+
+    inst = _instance_employe(db_session)
+    h1 = _host(db_session, "h1")
+    h2 = _host(db_session, "h2")
+    m1 = monter_instance(
+        db_session,
+        espace_transverse_id=inst.espace_id,
+        espace_hote_id=h1,
+        chemin_hote="/Partage",
+        portee_chemins={"/Documents"},
+        matrice_plafond=ECRITURE,
+        consenti_par="a",
+        acteur="a",
+    )
+    with _pytest.raises(ValueError, match="chemin_hote"):
+        monter_instance(
+            db_session,
+            espace_transverse_id=inst.espace_id,
+            espace_hote_id=h2,
+            chemin_hote="/Partage",  # DOUBLON actif -> refus
+            portee_chemins={"/Documents"},
+            matrice_plafond=ECRITURE,
+            consenti_par="a",
+            acteur="a",
+        )
+    archiver_montage(db_session, m1.montage_id, acteur="a")
+    monter_instance(  # l'archivé libère le chemin -> OK
+        db_session,
+        espace_transverse_id=inst.espace_id,
+        espace_hote_id=h2,
+        chemin_hote="/Partage",
+        portee_chemins={"/Documents"},
+        matrice_plafond=ECRITURE,
+        consenti_par="a",
+        acteur="a",
+    )

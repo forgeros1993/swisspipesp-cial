@@ -12,16 +12,23 @@ Config (env, jamais codé en dur) :
 
 from __future__ import annotations
 
+import json
 import os
-from collections.abc import Iterator
+import uuid
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from swisspipe.adapters.outbound.fake.adaptateur_memoire import AdaptateurMemoire
+from swisspipe.adapters.outbound.fake.executeur_memoire import ExecuteurProjectionMemoire
 from swisspipe.adapters.outbound.nextcloud.adaptateur_nextcloud import AdaptateurNextcloud
+from swisspipe.adapters.outbound.nextcloud.executeur_projection import ExecuteurProjectionOcc
+from swisspipe.adapters.outbound.nextcloud.occ_runner import executer_occ
+from swisspipe.application.projection_service import ExecuteurProjection
 from swisspipe.core.ports.adaptateur_ressource import AdaptateurRessource
+from swisspipe.persistence.models import Montage
 
 
 class ConfigurationError(RuntimeError):
@@ -44,6 +51,54 @@ def construire_sessionmaker(database_url: str | None = None) -> sessionmaker[Ses
     if not url:
         raise ConfigurationError("DATABASE_URL non défini — requis pour joindre le cœur (Postgres)")
     return sessionmaker(bind=create_engine(url, future=True))
+
+
+def fabrique_executeur_projection(
+    session: Session, nom: str | None = None
+) -> Callable[[uuid.UUID], ExecuteurProjection]:
+    """Fabrique (montage_id -> ExecuteurProjection) pour le reconcile TRANSVERSE. Wiring pur.
+
+    - fake      : exécuteur mémoire (hermétique, état volatile — dry-run/smoke).
+    - nextcloud : ExecuteurProjectionOcc, GF résolu par mountPoint == montage.chemin_hote
+      (la clé externe naturelle d'un transverse monté — prouvée étapes 7/8).
+    """
+    nom = (nom or os.environ.get("SWISSPIPE_ADAPTER", "fake")).strip().lower()
+
+    if nom == "fake":
+        memoire: dict[uuid.UUID, ExecuteurProjectionMemoire] = {}
+
+        def _fake(montage_id: uuid.UUID) -> ExecuteurProjection:
+            return memoire.setdefault(montage_id, ExecuteurProjectionMemoire())
+
+        return _fake
+
+    if nom == "nextcloud":
+
+        def _reel(montage_id: uuid.UUID) -> ExecuteurProjection:
+            montage = session.get(Montage, montage_id)
+            if montage is None:
+                raise ConfigurationError(f"montage {montage_id} introuvable")
+            folders = json.loads(executer_occ(["groupfolders:list", "--output=json"]))
+            items = list(folders.values()) if isinstance(folders, dict) else folders
+            # FAIL-CLOSED : le ciblage doit être UNIVOQUE. Un doublon de mountPoint
+            # (l'app groupfolders ne l'interdit pas) ciblerait un GF arbitraire et un
+            # apply retirerait ses ACL — on refuse au lieu de prendre le 1er match.
+            matches = [f for f in items if f.get("mountPoint") == montage.chemin_hote]
+            if len(matches) > 1:
+                ids = sorted(str(f["id"]) for f in matches)
+                raise ConfigurationError(
+                    f"mountPoint {montage.chemin_hote!r} ambigu : {len(matches)} Group "
+                    f"Folders ({', '.join(ids)}) — ciblage refusé"
+                )
+            if not matches:
+                raise ConfigurationError(
+                    f"aucun Group Folder au mountPoint {montage.chemin_hote!r} — structure absente"
+                )
+            return ExecuteurProjectionOcc(str(matches[0]["id"]))
+
+        return _reel
+
+    raise ConfigurationError(f"SWISSPIPE_ADAPTER inconnu : {nom!r} (attendu fake|nextcloud)")
 
 
 @contextmanager
